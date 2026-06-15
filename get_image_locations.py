@@ -44,16 +44,29 @@ DEFAULT_EXTENSIONS = (
     "mp4",
 )
 
-LOCATION_FIELDS = (
-    "city",
-    "town",
-    "village",
-    "municipality",
-    "city_district",
+SPECIFIC_LOCATION_FIELDS = (
+    "tourism",
+    "attraction",
+    "historic",
+    "heritage",
+    "neighbourhood",
+    "quarter",
+    "hamlet",
+    "locality",
     "suburb",
+    "city_district",
+)
+
+BROAD_LOCATION_FIELDS = (
+    "village",
+    "town",
+    "city",
+    "municipality",
     "county",
     "state",
 )
+
+PLACE_NAME_CATEGORIES = {"tourism", "historic", "place", "natural", "leisure"}
 
 EARTH_RADIUS_METERS = 6_371_008.8
 
@@ -141,6 +154,12 @@ def parse_args() -> argparse.Namespace:
         "--language",
         default="en",
         help="Preferred language for location names. Default: en.",
+    )
+    parser.add_argument(
+        "--geocode-zoom",
+        type=int,
+        default=16,
+        help="Reverse geocoder detail level from 0 to 18. Higher is more specific. Default: 16.",
     )
     parser.add_argument(
         "--user-agent",
@@ -367,14 +386,49 @@ def coordinates_by_folder(
     return grouped
 
 
-def cache_key(latitude: float, longitude: float, language: str) -> str:
-    return f"nominatim:{language}:{latitude:.6f},{longitude:.6f}"
+def cache_key(latitude: float, longitude: float, language: str, geocode_zoom: int) -> str:
+    return f"nominatim:v2:zoom{geocode_zoom}:{language}:{latitude:.6f},{longitude:.6f}"
+
+
+def first_address_value(address: dict[str, Any], fields: tuple[str, ...]) -> str | None:
+    for field in fields:
+        value = address.get(field)
+        if value:
+            return str(value)
+    return None
+
+
+def location_name_from_response(data: Any) -> str | None:
+    if not isinstance(data, dict):
+        return None
+
+    name = data.get("name")
+    category = data.get("category")
+    if name and category in PLACE_NAME_CATEGORIES:
+        return str(name)
+
+    address = data.get("address")
+    if isinstance(address, dict):
+        specific_name = first_address_value(address, SPECIFIC_LOCATION_FIELDS)
+        if specific_name:
+            return specific_name
+
+        broad_name = first_address_value(address, BROAD_LOCATION_FIELDS)
+        if broad_name:
+            return broad_name
+
+    display_name = data.get("display_name")
+    if display_name:
+        return str(display_name).split(",")[0].strip()
+
+    return None
 
 
 def reverse_geocode(
     latitude: float,
     longitude: float,
     language: str,
+    geocode_zoom: int,
     user_agent: str,
 ) -> str:
     query = urlencode(
@@ -382,7 +436,7 @@ def reverse_geocode(
             "format": "jsonv2",
             "lat": f"{latitude:.6f}",
             "lon": f"{longitude:.6f}",
-            "zoom": "10",
+            "zoom": str(geocode_zoom),
             "addressdetails": "1",
         }
     )
@@ -407,16 +461,10 @@ def reverse_geocode(
     except json.JSONDecodeError as exc:
         raise LocationError("Reverse geocoder returned invalid JSON.") from exc
 
-    address = data.get("address") if isinstance(data, dict) else None
-    if isinstance(address, dict):
-        for field in LOCATION_FIELDS:
-            value = address.get(field)
-            if value:
-                return str(value)
+    location_name = location_name_from_response(data)
+    if location_name:
+        return location_name
 
-    display_name = data.get("display_name") if isinstance(data, dict) else None
-    if display_name:
-        return str(display_name).split(",")[0].strip()
     return f"{latitude:.6f},{longitude:.6f}"
 
 
@@ -429,9 +477,15 @@ def location_for_point(
     if args.no_geocode:
         return f"{latitude:.{args.coordinate_precision}f},{longitude:.{args.coordinate_precision}f}"
 
-    key = cache_key(latitude, longitude, args.language)
+    key = cache_key(latitude, longitude, args.language, args.geocode_zoom)
     if key not in cache:
-        cache[key] = reverse_geocode(latitude, longitude, args.language, args.user_agent)
+        cache[key] = reverse_geocode(
+            latitude,
+            longitude,
+            args.language,
+            args.geocode_zoom,
+            args.user_agent,
+        )
         save_cache(args.cache, cache)
         time.sleep(1.0)
     return cache[key]
@@ -498,6 +552,8 @@ def main() -> int:
             raise LocationError("--cluster-radius-meters cannot be negative.")
         if args.min_photos_per_location < 1:
             raise LocationError("--min-photos-per-location must be at least 1.")
+        if not 0 <= args.geocode_zoom <= 18:
+            raise LocationError("--geocode-zoom must be between 0 and 18.")
 
         cache = load_cache(args.cache)
         folders = discover_folders(args.root, selected)

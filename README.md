@@ -51,7 +51,7 @@ Por defecto:
 - Busca GPS en HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, varios RAW, MOV y MP4.
 - Agrupa coordenadas cercanas con un radio de 1000 metros antes de geocodificar.
 - Permite ocultar ubicaciones con pocas fotos.
-- Usa Nominatim/OpenStreetMap para geocodificación inversa.
+- Usa Nominatim/OpenStreetMap para geocodificación inversa con detalle alto.
 - Imprime CSV por stdout.
 - Muestra el progreso por stderr para no mezclarlo con el CSV.
 
@@ -182,6 +182,26 @@ Puedes pedir nombres localizados:
 ```
 
 Por defecto usa `en`, que suele dar nombres más estables para exportaciones.
+
+## Nivel de detalle de los nombres
+
+El script pide a Nominatim nombres relativamente concretos por defecto. Esto ayuda a que aparezcan lugares como barrios, areas historicas o puntos turisticos, en vez de caer siempre al municipio mas cercano.
+
+Puedes ajustar el nivel con `--geocode-zoom`, de `0` a `18`:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --geocode-zoom 16
+```
+
+Valores utiles:
+
+- `10`: mas amplio, suele devolver provincia/comarca/municipio grande.
+- `12` o `14`: equilibrio entre ciudad, pueblo y zona.
+- `16`: mas especifico, valor por defecto; mejor para sitios como `Narai-juku`.
+- `18`: muy concreto, puede acabar devolviendo edificios, calles o objetos cercanos.
+
+La cache incluye el zoom en la clave, asi que cambiar este parametro genera nuevas consultas sin reutilizar resultados antiguos demasiado amplios.
 
 ## Notas sobre Nominatim/OpenStreetMap
 
