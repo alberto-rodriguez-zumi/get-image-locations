@@ -50,6 +50,7 @@ Por defecto:
 - Lee las subcarpetas inmediatas de la carpeta raíz.
 - Busca GPS en HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, varios RAW, MOV y MP4.
 - Agrupa coordenadas cercanas con un radio de 1000 metros antes de geocodificar.
+- Permite ocultar ubicaciones con pocas fotos.
 - Usa Nominatim/OpenStreetMap para geocodificación inversa.
 - Imprime CSV por stdout.
 - Muestra el progreso por stderr para no mezclarlo con el CSV.
@@ -144,6 +145,17 @@ Para desactivar esta agrupacion:
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --cluster-radius-meters 0
 ```
+
+## Ocultar ubicaciones con pocas fotos
+
+Puedes pedir que una ubicacion solo aparezca si tiene un minimo de fotos o videos con GPS dentro del grupo:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --min-photos-per-location 3
+```
+
+Esto es util para descartar paradas logisticas, hoteles o tiendas con una o dos fotos sueltas. El filtro se aplica despues de agrupar por distancia, asi que una ubicacion se queda fuera antes de llamar al servicio de mapas.
 
 ## Ajustar precisión
 

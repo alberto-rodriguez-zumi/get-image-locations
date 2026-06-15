@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
@@ -59,6 +60,13 @@ EARTH_RADIUS_METERS = 6_371_008.8
 
 class LocationError(RuntimeError):
     """Raised when the location workflow cannot continue."""
+
+
+@dataclass(frozen=True)
+class LocationCluster:
+    latitude: float
+    longitude: float
+    count: int
 
 
 class Progress:
@@ -122,6 +130,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1000.0,
         help="Merge GPS points within this distance before geocoding. Use 0 to disable. Default: 1000.",
+    )
+    parser.add_argument(
+        "--min-photos-per-location",
+        type=int,
+        default=1,
+        help="Hide clustered locations with fewer GPS media files than this. Default: 1.",
     )
     parser.add_argument(
         "--language",
@@ -268,21 +282,23 @@ def distance_meters(first: tuple[float, float], second: tuple[float, float]) -> 
     return 2 * EARTH_RADIUS_METERS * math.asin(math.sqrt(haversine))
 
 
-def unique_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    seen: set[tuple[float, float]] = set()
-    result: list[tuple[float, float]] = []
+def unique_points(points: list[tuple[float, float]]) -> list[LocationCluster]:
+    counts: dict[tuple[float, float], int] = {}
+    result: list[LocationCluster] = []
     for latitude, longitude in points:
         point = (round(latitude, 6), round(longitude, 6))
-        if point not in seen:
-            seen.add(point)
-            result.append(point)
+        counts[point] = counts.get(point, 0) + 1
+
+    for (latitude, longitude), count in counts.items():
+        result.append(LocationCluster(latitude=latitude, longitude=longitude, count=count))
+
     return result
 
 
 def cluster_coordinates(
     points: list[tuple[float, float]],
     radius_meters: float,
-) -> list[tuple[float, float]]:
+) -> list[LocationCluster]:
     if radius_meters <= 0:
         return unique_points(points)
 
@@ -308,7 +324,21 @@ def cluster_coordinates(
         cluster["longitude"] = ((cluster["longitude"] * cluster["count"]) + longitude) / count
         cluster["count"] = count
 
-    return [(round(cluster["latitude"], 6), round(cluster["longitude"], 6)) for cluster in clusters]
+    return [
+        LocationCluster(
+            latitude=round(cluster["latitude"], 6),
+            longitude=round(cluster["longitude"], 6),
+            count=int(cluster["count"]),
+        )
+        for cluster in clusters
+    ]
+
+
+def filter_clusters(
+    clusters: list[LocationCluster],
+    min_photos_per_location: int,
+) -> list[LocationCluster]:
+    return [cluster for cluster in clusters if cluster.count >= min_photos_per_location]
 
 
 def coordinates_by_folder(
@@ -316,8 +346,8 @@ def coordinates_by_folder(
     extensions: set[str],
     args: argparse.Namespace,
     progress: Progress,
-) -> dict[str, list[tuple[float, float]]]:
-    grouped: dict[str, list[tuple[float, float]]] = {}
+) -> dict[str, list[LocationCluster]]:
+    grouped: dict[str, list[LocationCluster]] = {}
 
     for folder in folders:
         files = discover_media_files(folder, extensions)
@@ -331,7 +361,8 @@ def coordinates_by_folder(
             progress.update(folder.name, min(start + len(batch), len(files)), len(files))
 
         progress.clear()
-        grouped[folder.name] = cluster_coordinates(raw_coordinates, args.cluster_radius_meters)
+        clusters = cluster_coordinates(raw_coordinates, args.cluster_radius_meters)
+        grouped[folder.name] = filter_clusters(clusters, args.min_photos_per_location)
 
     return grouped
 
@@ -418,15 +449,15 @@ def unique_preserving_order(values: list[str]) -> list[str]:
 
 def build_rows(
     folders: list[Path],
-    coordinates_by_folder: dict[str, list[tuple[float, float]]],
+    coordinates_by_folder: dict[str, list[LocationCluster]],
     args: argparse.Namespace,
     cache: dict[str, str],
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     for folder in folders:
         locations = [
-            location_for_point(latitude, longitude, args, cache)
-            for latitude, longitude in coordinates_by_folder.get(folder.name, [])
+            location_for_point(cluster.latitude, cluster.longitude, args, cache)
+            for cluster in coordinates_by_folder.get(folder.name, [])
         ]
         locations = unique_preserving_order(locations)
         if locations or args.include_empty:
@@ -465,6 +496,8 @@ def main() -> int:
             raise LocationError("--exiftool-batch-size must be at least 1.")
         if args.cluster_radius_meters < 0:
             raise LocationError("--cluster-radius-meters cannot be negative.")
+        if args.min_photos_per_location < 1:
+            raise LocationError("--min-photos-per-location must be at least 1.")
 
         cache = load_cache(args.cache)
         folders = discover_folders(args.root, selected)
