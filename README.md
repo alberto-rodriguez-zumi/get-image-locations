@@ -185,23 +185,43 @@ Por defecto usa `en`, que suele dar nombres más estables para exportaciones.
 
 ## Nivel de detalle de los nombres
 
-El script pide a Nominatim nombres relativamente concretos por defecto. Esto ayuda a que aparezcan lugares como barrios, areas historicas o puntos turisticos, en vez de caer siempre al municipio mas cercano.
+El script pide a Nominatim nombres de detalle medio por defecto. Intenta evitar direcciones postales como `Ginza 2`, `Kuramae 2-chome` o `Oshiage 1`, pero sigue priorizando puntos turisticos o historicos si OpenStreetMap los devuelve con nombre.
 
 Puedes ajustar el nivel con `--geocode-zoom`, de `0` a `18`:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
-  --geocode-zoom 16
+  --geocode-zoom 14
 ```
 
 Valores utiles:
 
 - `10`: mas amplio, suele devolver provincia/comarca/municipio grande.
-- `12` o `14`: equilibrio entre ciudad, pueblo y zona.
-- `16`: mas especifico, valor por defecto; mejor para sitios como `Narai-juku`.
+- `12` o `14`: equilibrio entre ciudad, pueblo y zona; `14` es el valor por defecto.
+- `16`: mas especifico, puede funcionar para sitios concretos pero tambien sacar barrios numerados.
 - `18`: muy concreto, puede acabar devolviendo edificios, calles o objetos cercanos.
 
-La cache incluye el zoom en la clave, asi que cambiar este parametro genera nuevas consultas sin reutilizar resultados antiguos demasiado amplios.
+Tambien puedes controlar que tipo de nombre se prefiere:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --name-detail specific
+```
+
+Modos:
+
+- `balanced`: valor por defecto; evita direcciones tipo `chome`.
+- `specific`: permite localidades pequeñas como `hamlet` o `locality`, pero sigue evitando direcciones.
+- `address`: permite nombres de direccion, barrios numerados y `chome`.
+
+Por defecto se intentan evitar nombres en escritura local como kanji/kana si hay una alternativa romanizada o mas amplia. Si quieres conservar nombres locales:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --allow-local-script
+```
+
+La cache incluye el zoom, el modo de nombre y la preferencia de escritura en la clave, asi que cambiar estos parametros genera nuevas consultas sin reutilizar resultados antiguos demasiado amplios.
 
 ## Notas sobre Nominatim/OpenStreetMap
 

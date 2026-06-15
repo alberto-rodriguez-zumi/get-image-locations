@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -44,15 +45,21 @@ DEFAULT_EXTENSIONS = (
     "mp4",
 )
 
-SPECIFIC_LOCATION_FIELDS = (
+BASIC_SPECIFIC_LOCATION_FIELDS = (
     "tourism",
     "attraction",
     "historic",
     "heritage",
+)
+
+LOCAL_PLACE_FIELDS = (
+    "locality",
+    "hamlet",
+)
+
+ADDRESS_DETAIL_FIELDS = (
     "neighbourhood",
     "quarter",
-    "hamlet",
-    "locality",
     "suburb",
     "city_district",
 )
@@ -67,6 +74,11 @@ BROAD_LOCATION_FIELDS = (
 )
 
 PLACE_NAME_CATEGORIES = {"tourism", "historic", "place", "natural", "leisure"}
+LOCAL_SCRIPT_RANGES = (
+    ("\u3040", "\u30ff"),  # Hiragana and Katakana
+    ("\u3400", "\u9fff"),  # CJK ideographs
+)
+CHOME_MARKERS = ("chome", "-cho", "丁目")
 
 EARTH_RADIUS_METERS = 6_371_008.8
 
@@ -158,8 +170,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--geocode-zoom",
         type=int,
-        default=16,
-        help="Reverse geocoder detail level from 0 to 18. Higher is more specific. Default: 16.",
+        default=14,
+        help="Reverse geocoder detail level from 0 to 18. Higher is more specific. Default: 14.",
+    )
+    parser.add_argument(
+        "--name-detail",
+        choices=("balanced", "specific", "address"),
+        default="balanced",
+        help="How specific location names should be. Default: balanced.",
+    )
+    parser.add_argument(
+        "--allow-local-script",
+        action="store_true",
+        help="Allow local-script names such as Japanese kanji/kana when no romanized name is available.",
     )
     parser.add_argument(
         "--user-agent",
@@ -386,40 +409,150 @@ def coordinates_by_folder(
     return grouped
 
 
-def cache_key(latitude: float, longitude: float, language: str, geocode_zoom: int) -> str:
-    return f"nominatim:v2:zoom{geocode_zoom}:{language}:{latitude:.6f},{longitude:.6f}"
+def cache_key(
+    latitude: float,
+    longitude: float,
+    language: str,
+    geocode_zoom: int,
+    name_detail: str,
+    allow_local_script: bool,
+) -> str:
+    script_mode = "local" if allow_local_script else "romanized"
+    return (
+        f"nominatim:v3:zoom{geocode_zoom}:{name_detail}:{script_mode}:"
+        f"{language}:{latitude:.6f},{longitude:.6f}"
+    )
 
 
-def first_address_value(address: dict[str, Any], fields: tuple[str, ...]) -> str | None:
+def has_local_script(value: str) -> bool:
+    return any(start <= char <= end for char in value for start, end in LOCAL_SCRIPT_RANGES)
+
+
+def looks_like_chome(value: str) -> bool:
+    lowered = value.casefold()
+    return any(marker in lowered for marker in CHOME_MARKERS) or bool(
+        re.search(r"(?:^|[\s-])\d+(?:-?chome)?$", lowered)
+    )
+
+
+def clean_location_value(value: Any, allow_local_script: bool, allow_chome: bool) -> str | None:
+    if not value:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if not allow_local_script and has_local_script(text):
+        return None
+    if not allow_chome and looks_like_chome(text):
+        return None
+
+    return text
+
+
+def first_address_value(
+    address: dict[str, Any],
+    fields: tuple[str, ...],
+    allow_local_script: bool,
+    allow_chome: bool,
+) -> str | None:
     for field in fields:
-        value = address.get(field)
+        value = clean_location_value(address.get(field), allow_local_script, allow_chome)
         if value:
-            return str(value)
+            return value
     return None
 
 
-def location_name_from_response(data: Any) -> str | None:
+def namedetail_value(
+    namedetails: Any,
+    language: str,
+    allow_local_script: bool,
+    allow_chome: bool,
+) -> str | None:
+    if not isinstance(namedetails, dict):
+        return None
+
+    keys = (
+        f"name:{language}",
+        "name:en",
+        "int_name",
+        "name:latin",
+        "name:romaji",
+        "name:ja-Latn",
+    )
+    for key in keys:
+        value = clean_location_value(namedetails.get(key), allow_local_script, allow_chome)
+        if value:
+            return value
+
+    return None
+
+
+def location_name_from_response(
+    data: Any,
+    language: str,
+    name_detail: str,
+    allow_local_script: bool,
+) -> str | None:
     if not isinstance(data, dict):
         return None
+
+    allow_chome = name_detail == "address"
+    namedetails_name = namedetail_value(
+        data.get("namedetails"),
+        language,
+        allow_local_script,
+        allow_chome,
+    )
+    if namedetails_name:
+        return namedetails_name
 
     name = data.get("name")
     category = data.get("category")
     if name and category in PLACE_NAME_CATEGORIES:
-        return str(name)
+        clean_name = clean_location_value(name, allow_local_script, allow_chome)
+        if clean_name:
+            return clean_name
 
     address = data.get("address")
     if isinstance(address, dict):
-        specific_name = first_address_value(address, SPECIFIC_LOCATION_FIELDS)
+        specific_name = first_address_value(
+            address,
+            BASIC_SPECIFIC_LOCATION_FIELDS,
+            allow_local_script,
+            allow_chome,
+        )
         if specific_name:
             return specific_name
 
-        broad_name = first_address_value(address, BROAD_LOCATION_FIELDS)
+        if name_detail in {"specific", "address"}:
+            local_name = first_address_value(
+                address,
+                LOCAL_PLACE_FIELDS,
+                allow_local_script,
+                allow_chome,
+            )
+            if local_name:
+                return local_name
+
+        if name_detail == "address":
+            address_name = first_address_value(
+                address,
+                ADDRESS_DETAIL_FIELDS,
+                allow_local_script,
+                allow_chome,
+            )
+            if address_name:
+                return address_name
+
+        broad_name = first_address_value(address, BROAD_LOCATION_FIELDS, allow_local_script, allow_chome)
         if broad_name:
             return broad_name
 
     display_name = data.get("display_name")
     if display_name:
-        return str(display_name).split(",")[0].strip()
+        first_part = str(display_name).split(",")[0].strip()
+        return clean_location_value(first_part, allow_local_script, allow_chome)
 
     return None
 
@@ -429,6 +562,8 @@ def reverse_geocode(
     longitude: float,
     language: str,
     geocode_zoom: int,
+    name_detail: str,
+    allow_local_script: bool,
     user_agent: str,
 ) -> str:
     query = urlencode(
@@ -438,6 +573,7 @@ def reverse_geocode(
             "lon": f"{longitude:.6f}",
             "zoom": str(geocode_zoom),
             "addressdetails": "1",
+            "namedetails": "1",
         }
     )
     request = Request(
@@ -461,7 +597,12 @@ def reverse_geocode(
     except json.JSONDecodeError as exc:
         raise LocationError("Reverse geocoder returned invalid JSON.") from exc
 
-    location_name = location_name_from_response(data)
+    location_name = location_name_from_response(
+        data,
+        language,
+        name_detail,
+        allow_local_script,
+    )
     if location_name:
         return location_name
 
@@ -477,13 +618,22 @@ def location_for_point(
     if args.no_geocode:
         return f"{latitude:.{args.coordinate_precision}f},{longitude:.{args.coordinate_precision}f}"
 
-    key = cache_key(latitude, longitude, args.language, args.geocode_zoom)
+    key = cache_key(
+        latitude,
+        longitude,
+        args.language,
+        args.geocode_zoom,
+        args.name_detail,
+        args.allow_local_script,
+    )
     if key not in cache:
         cache[key] = reverse_geocode(
             latitude,
             longitude,
             args.language,
             args.geocode_zoom,
+            args.name_detail,
+            args.allow_local_script,
             args.user_agent,
         )
         save_cache(args.cache, cache)
