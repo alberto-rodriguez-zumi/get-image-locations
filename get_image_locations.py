@@ -170,8 +170,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--geocode-zoom",
         type=int,
-        default=14,
-        help="Reverse geocoder detail level from 0 to 18. Higher is more specific. Default: 14.",
+        default=12,
+        help="Reverse geocoder detail level from 0 to 18. Higher is more specific. Default: 12.",
     )
     parser.add_argument(
         "--name-detail",

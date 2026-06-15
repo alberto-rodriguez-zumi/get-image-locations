@@ -191,13 +191,13 @@ Puedes ajustar el nivel con `--geocode-zoom`, de `0` a `18`:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
-  --geocode-zoom 14
+  --geocode-zoom 12
 ```
 
 Valores utiles:
 
 - `10`: mas amplio, suele devolver provincia/comarca/municipio grande.
-- `12` o `14`: equilibrio entre ciudad, pueblo y zona; `14` es el valor por defecto.
+- `12` o `14`: equilibrio entre ciudad, pueblo y zona; `12` es el valor por defecto.
 - `16`: mas especifico, puede funcionar para sitios concretos pero tambien sacar barrios numerados.
 - `18`: muy concreto, puede acabar devolviendo edificios, calles o objetos cercanos.
 
