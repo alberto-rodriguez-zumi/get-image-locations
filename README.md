@@ -49,9 +49,10 @@ Por defecto:
 
 - Lee las subcarpetas inmediatas de la carpeta raíz.
 - Busca GPS en HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, varios RAW, MOV y MP4.
-- Agrupa coordenadas cercanas redondeando a 2 decimales.
+- Agrupa coordenadas cercanas con un radio de 1000 metros antes de geocodificar.
 - Usa Nominatim/OpenStreetMap para geocodificación inversa.
 - Imprime CSV por stdout.
+- Muestra el progreso por stderr para no mezclarlo con el CSV.
 
 ## Exportar a CSV
 
@@ -104,9 +105,49 @@ Puedes cambiar la ruta:
   --cache cache-japon.json
 ```
 
+## Progreso
+
+Mientras procesa, el script muestra la carpeta actual y el numero de archivos analizados:
+
+```text
+Processing 2026-06-02: 100/248 files analyzed
+```
+
+El progreso se escribe en stderr, no en stdout. Asi puedes redirigir el CSV sin contaminarlo:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --output locations.csv
+```
+
+Para ocultar el progreso:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --no-progress
+```
+
+## Agrupar puntos cercanos
+
+Para reducir llamadas al servicio de mapas, las coordenadas GPS cercanas se agrupan antes de geocodificar. Por defecto se agrupan puntos a menos de 1000 metros.
+
+Puedes ajustar el radio:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --cluster-radius-meters 2500
+```
+
+Para desactivar esta agrupacion:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --cluster-radius-meters 0
+```
+
 ## Ajustar precisión
 
-El parámetro `--coordinate-precision` controla cómo se agrupan fotos cercanas antes de geocodificar:
+El parametro `--coordinate-precision` controla cuantos decimales se muestran cuando usas `--no-geocode`:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -115,9 +156,9 @@ El parámetro `--coordinate-precision` controla cómo se agrupan fotos cercanas 
 
 Valores útiles:
 
-- `2`: agrupa más, menos llamadas al mapa, bueno para nivel ciudad/zona.
-- `3`: más detalle, puede separar ubicaciones cercanas dentro de una misma zona.
-- `4`: mucho más detalle, puede generar muchas llamadas.
+- `2`: salida compacta, buena para inspeccion rapida.
+- `3`: mas detalle en coordenadas impresas.
+- `4`: mucho mas detalle si necesitas auditar puntos concretos.
 
 ## Idioma
 

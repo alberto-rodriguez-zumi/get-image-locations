@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -53,9 +54,35 @@ LOCATION_FIELDS = (
     "state",
 )
 
+EARTH_RADIUS_METERS = 6_371_008.8
+
 
 class LocationError(RuntimeError):
     """Raised when the location workflow cannot continue."""
+
+
+class Progress:
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self.is_tty = sys.stderr.isatty()
+        self.last_width = 0
+
+    def update(self, folder_name: str, processed: int, total: int) -> None:
+        if not self.enabled:
+            return
+
+        message = f"Processing {folder_name}: {processed}/{total} files analyzed"
+        if self.is_tty:
+            padding = " " * max(0, self.last_width - len(message))
+            print(f"\r{message}{padding}", end="", file=sys.stderr, flush=True)
+            self.last_width = len(message)
+        else:
+            print(message, file=sys.stderr, flush=True)
+
+    def clear(self) -> None:
+        if self.enabled and self.is_tty and self.last_width:
+            print(f"\r{' ' * self.last_width}\r", end="", file=sys.stderr, flush=True)
+            self.last_width = 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,7 +115,13 @@ def parse_args() -> argparse.Namespace:
         "--coordinate-precision",
         type=int,
         default=2,
-        help="Decimals used to group nearby coordinates before geocoding. Default: 2.",
+        help="Decimals used when printing coordinates with --no-geocode. Default: 2.",
+    )
+    parser.add_argument(
+        "--cluster-radius-meters",
+        type=float,
+        default=1000.0,
+        help="Merge GPS points within this distance before geocoding. Use 0 to disable. Default: 1000.",
     )
     parser.add_argument(
         "--language",
@@ -114,6 +147,17 @@ def parse_args() -> argparse.Namespace:
         "--include-empty",
         action="store_true",
         help="Include folders that have no GPS locations.",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress messages. Progress is written to stderr, not stdout.",
+    )
+    parser.add_argument(
+        "--exiftool-batch-size",
+        type=int,
+        default=100,
+        help="Number of files passed to each exiftool call. Default: 100.",
     )
     return parser.parse_args()
 
@@ -154,19 +198,27 @@ def discover_folders(root: Path, selected: set[str] | None) -> list[Path]:
     return [by_name[name] for name in sorted(selected)]
 
 
-def read_gps_records(paths: list[Path], extensions: list[str]) -> list[dict[str, Any]]:
+def discover_media_files(folder: Path, extensions: set[str]) -> list[Path]:
+    return sorted(
+        path
+        for path in folder.rglob("*")
+        if path.is_file() and path.suffix.lower().lstrip(".") in extensions
+    )
+
+
+def read_gps_records(files: list[Path]) -> list[dict[str, Any]]:
+    if not files:
+        return []
+
     command = [
         "exiftool",
         "-json",
         "-n",
-        "-r",
         "-GPSLatitude",
         "-GPSLongitude",
         "-FileType",
     ]
-    for extension in extensions:
-        command.extend(["-ext", extension.lower().lstrip(".")])
-    command.extend(str(path) for path in paths)
+    command.extend(str(path) for path in files)
 
     try:
         completed = subprocess.run(
@@ -190,40 +242,96 @@ def read_gps_records(paths: list[Path], extensions: list[str]) -> list[dict[str,
     return records
 
 
-def record_folder_name(root: Path, source_file: str) -> str | None:
-    try:
-        relative = Path(source_file).resolve().relative_to(root.resolve())
-    except ValueError:
-        return None
-    if len(relative.parts) < 2:
-        return None
-    return relative.parts[0]
-
-
-def grouped_coordinates(
-    root: Path,
-    folder_names: set[str],
-    records: list[dict[str, Any]],
-    precision: int,
-) -> dict[str, list[tuple[float, float]]]:
-    grouped: dict[str, list[tuple[float, float]]] = {name: [] for name in folder_names}
-    seen_by_folder: dict[str, set[tuple[float, float]]] = {name: set() for name in folder_names}
+def coordinates_from_records(records: list[dict[str, Any]]) -> list[tuple[float, float]]:
+    coordinates: list[tuple[float, float]] = []
 
     for record in records:
-        source_file = record.get("SourceFile")
         latitude = record.get("GPSLatitude")
         longitude = record.get("GPSLongitude")
-        if not source_file or latitude is None or longitude is None:
+        if latitude is None or longitude is None:
+            continue
+        coordinates.append((float(latitude), float(longitude)))
+
+    return coordinates
+
+
+def distance_meters(first: tuple[float, float], second: tuple[float, float]) -> float:
+    first_lat, first_lon = (math.radians(value) for value in first)
+    second_lat, second_lon = (math.radians(value) for value in second)
+    delta_lat = second_lat - first_lat
+    delta_lon = second_lon - first_lon
+
+    haversine = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(first_lat) * math.cos(second_lat) * math.sin(delta_lon / 2) ** 2
+    )
+    return 2 * EARTH_RADIUS_METERS * math.asin(math.sqrt(haversine))
+
+
+def unique_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    seen: set[tuple[float, float]] = set()
+    result: list[tuple[float, float]] = []
+    for latitude, longitude in points:
+        point = (round(latitude, 6), round(longitude, 6))
+        if point not in seen:
+            seen.add(point)
+            result.append(point)
+    return result
+
+
+def cluster_coordinates(
+    points: list[tuple[float, float]],
+    radius_meters: float,
+) -> list[tuple[float, float]]:
+    if radius_meters <= 0:
+        return unique_points(points)
+
+    clusters: list[dict[str, float]] = []
+    for latitude, longitude in points:
+        closest_index: int | None = None
+        closest_distance = radius_meters
+
+        for index, cluster in enumerate(clusters):
+            center = (cluster["latitude"], cluster["longitude"])
+            distance = distance_meters((latitude, longitude), center)
+            if distance <= closest_distance:
+                closest_index = index
+                closest_distance = distance
+
+        if closest_index is None:
+            clusters.append({"latitude": latitude, "longitude": longitude, "count": 1.0})
             continue
 
-        folder_name = record_folder_name(root, str(source_file))
-        if folder_name not in folder_names:
-            continue
+        cluster = clusters[closest_index]
+        count = cluster["count"] + 1
+        cluster["latitude"] = ((cluster["latitude"] * cluster["count"]) + latitude) / count
+        cluster["longitude"] = ((cluster["longitude"] * cluster["count"]) + longitude) / count
+        cluster["count"] = count
 
-        point = (round(float(latitude), precision), round(float(longitude), precision))
-        if point not in seen_by_folder[folder_name]:
-            seen_by_folder[folder_name].add(point)
-            grouped[folder_name].append(point)
+    return [(round(cluster["latitude"], 6), round(cluster["longitude"], 6)) for cluster in clusters]
+
+
+def coordinates_by_folder(
+    folders: list[Path],
+    extensions: set[str],
+    args: argparse.Namespace,
+    progress: Progress,
+) -> dict[str, list[tuple[float, float]]]:
+    grouped: dict[str, list[tuple[float, float]]] = {}
+
+    for folder in folders:
+        files = discover_media_files(folder, extensions)
+        raw_coordinates: list[tuple[float, float]] = []
+        progress.update(folder.name, 0, len(files))
+
+        for start in range(0, len(files), args.exiftool_batch_size):
+            batch = files[start : start + args.exiftool_batch_size]
+            records = read_gps_records(batch)
+            raw_coordinates.extend(coordinates_from_records(records))
+            progress.update(folder.name, min(start + len(batch), len(files)), len(files))
+
+        progress.clear()
+        grouped[folder.name] = cluster_coordinates(raw_coordinates, args.cluster_radius_meters)
 
     return grouped
 
@@ -348,18 +456,23 @@ def write_csv(rows: list[list[str]], output: Path | None) -> None:
 
 def main() -> int:
     args = parse_args()
-    extensions = [item.strip() for item in args.extensions.split(",") if item.strip()]
+    extensions = {item.strip().lower().lstrip(".") for item in args.extensions.split(",") if item.strip()}
     selected = set(args.folder) if args.folder else None
+    progress = Progress(enabled=not args.no_progress)
 
     try:
+        if args.exiftool_batch_size < 1:
+            raise LocationError("--exiftool-batch-size must be at least 1.")
+        if args.cluster_radius_meters < 0:
+            raise LocationError("--cluster-radius-meters cannot be negative.")
+
         cache = load_cache(args.cache)
         folders = discover_folders(args.root, selected)
-        folder_names = {folder.name for folder in folders}
-        records = read_gps_records(folders if selected else [args.root], extensions)
-        coordinates = grouped_coordinates(args.root, folder_names, records, args.coordinate_precision)
+        coordinates = coordinates_by_folder(folders, extensions, args, progress)
         rows = build_rows(folders, coordinates, args, cache)
         write_csv(rows, args.output)
     except LocationError as exc:
+        progress.clear()
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
