@@ -40,7 +40,7 @@ sudo apt install libimage-exiftool-perl python3
 ## Usage
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026"
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026"
 ```
 
 Privacy note: this mode sends rounded GPS coordinates to Nominatim/OpenStreetMap in order to convert them into place names. If you want a fully local workflow, use `--no-geocode`.
@@ -58,7 +58,7 @@ By default the script:
 ## Export to CSV
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --output locations.csv
 ```
 
@@ -69,14 +69,14 @@ The script always prints the result to stdout and, if you pass `--output`, also 
 You can generate one GPX file per subfolder using GPS coordinates and capture time:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --gpx-output-dir gpx
 ```
 
 This keeps CSV output on stdout and writes files such as `gpx/2026-06-02.gpx`. If you only want GPX files and do not want CSV or place-name lookup:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --gpx-output-dir gpx \
   --gpx-only
 ```
@@ -84,7 +84,7 @@ This keeps CSV output on stdout and writes files such as `gpx/2026-06-02.gpx`. I
 To stay within Lightroom point limits:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --gpx-output-dir gpx \
   --gpx-only \
   --gpx-max-points 500
@@ -93,7 +93,7 @@ To stay within Lightroom point limits:
 Before applying that hard limit, the script simplifies runs of very close consecutive points: if several consecutive points stay within the configured distance and time window, it keeps only the first and last point of that run.
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --gpx-output-dir gpx \
   --gpx-only \
   --gpx-simplify-distance-meters 25 \
@@ -120,7 +120,7 @@ If your folders do not contain dates in their names, that last filter does not a
 You can tune these filters:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --min-capture-date 2020-01-01 \
   --folder-date-tolerance-days 5
 ```
@@ -128,28 +128,28 @@ You can tune these filters:
 To disable the folder-date check entirely:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --folder-date-tolerance-days -1
 ```
 
 If you really want to keep `0,0` coordinates:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --allow-zero-coordinates
 ```
 
 ## Process a Single Folder
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --folder 2026-06-02
 ```
 
 You can pass more than one folder:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --folder 2026-06-01 \
   --folder 2026-06-02
 ```
@@ -159,7 +159,7 @@ You can pass more than one folder:
 This is useful to verify that GPS metadata is being read correctly:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --folder 2026-06-02 \
   --no-geocode
 ```
@@ -177,7 +177,7 @@ Reverse geocoding results are stored in `.geocode-cache.json` so the script does
 You can change the cache path:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --cache cache-japan.json
 ```
 
@@ -192,14 +192,14 @@ Processing 2026-06-02: 100/248 files analyzed
 Progress is written to stderr, not stdout. That means you can redirect CSV output without contaminating it:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --output locations.csv
 ```
 
 To hide progress:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --no-progress
 ```
 
@@ -210,14 +210,14 @@ To reduce calls to the map service, nearby GPS coordinates are grouped before ge
 You can adjust the radius:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --cluster-radius-meters 2500
 ```
 
 To disable this grouping:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --cluster-radius-meters 0
 ```
 
@@ -226,7 +226,7 @@ To disable this grouping:
 You can require a minimum number of GPS-tagged photos or videos for a location to appear in the output:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --min-photos-per-location 3
 ```
 
@@ -237,7 +237,7 @@ This is useful for removing logistical stops, hotels, or shops where you only to
 The `--coordinate-precision` parameter controls how many decimals are printed when you use `--no-geocode`:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --coordinate-precision 2
 ```
 
@@ -252,7 +252,7 @@ Useful values:
 You can ask for localized names:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --language es
 ```
 
@@ -265,7 +265,7 @@ By default, the script asks Nominatim for medium-detail names. It tries to avoid
 You can adjust the level with `--geocode-zoom`, from `0` to `18`:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --geocode-zoom 12
 ```
 
@@ -279,7 +279,7 @@ Useful values:
 You can also control what style of name is preferred:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --name-detail specific
 ```
 
@@ -292,7 +292,7 @@ Modes:
 By default, the script tries to avoid local-script names such as kanji or kana when a romanized or broader alternative is available. If you want to keep local-script names:
 
 ```bash
-./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
   --allow-local-script
 ```
 
