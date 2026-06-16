@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -23,6 +24,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
 
 
 DEFAULT_EXTENSIONS = (
@@ -44,6 +46,7 @@ DEFAULT_EXTENSIONS = (
     "mov",
     "mp4",
 )
+DEFAULT_MIN_CAPTURE_DATE = "2000-01-01"
 
 BASIC_SPECIFIC_LOCATION_FIELDS = (
     "tourism",
@@ -92,6 +95,20 @@ class LocationCluster:
     latitude: float
     longitude: float
     count: int
+
+
+@dataclass(frozen=True)
+class GpxPoint:
+    latitude: float
+    longitude: float
+    captured_at: datetime
+    source_file: str
+
+
+@dataclass(frozen=True)
+class FolderAnalysis:
+    clusters: list[LocationCluster]
+    gpx_points: list[GpxPoint]
 
 
 class Progress:
@@ -215,6 +232,50 @@ def parse_args() -> argparse.Namespace:
         default=100,
         help="Number of files passed to each exiftool call. Default: 100.",
     )
+    parser.add_argument(
+        "--gpx-output-dir",
+        type=Path,
+        help="Optional folder where one GPX track per input subfolder will be written.",
+    )
+    parser.add_argument(
+        "--gpx-only",
+        action="store_true",
+        help="Only generate GPX files. Requires --gpx-output-dir and skips CSV/geocoding output.",
+    )
+    parser.add_argument(
+        "--gpx-max-points",
+        type=int,
+        default=0,
+        help="Maximum points per generated GPX. Use 0 for no hard limit. Default: 0.",
+    )
+    parser.add_argument(
+        "--gpx-simplify-distance-meters",
+        type=float,
+        default=25.0,
+        help="Collapse consecutive GPX points within this distance. Default: 25.",
+    )
+    parser.add_argument(
+        "--gpx-simplify-time-seconds",
+        type=int,
+        default=300,
+        help="Collapse consecutive GPX points within this time gap. Default: 300.",
+    )
+    parser.add_argument(
+        "--min-capture-date",
+        default=DEFAULT_MIN_CAPTURE_DATE,
+        help=f"Ignore media captured before this date. Default: {DEFAULT_MIN_CAPTURE_DATE}.",
+    )
+    parser.add_argument(
+        "--folder-date-tolerance-days",
+        type=int,
+        default=2,
+        help="Ignore dated-folder media captured more than this many days away from the folder date. Use -1 to disable. Default: 2.",
+    )
+    parser.add_argument(
+        "--allow-zero-coordinates",
+        action="store_true",
+        help="Keep GPS points at 0,0 instead of treating them as invalid.",
+    )
     return parser.parse_args()
 
 
@@ -272,6 +333,14 @@ def read_gps_records(files: list[Path]) -> list[dict[str, Any]]:
         "-n",
         "-GPSLatitude",
         "-GPSLongitude",
+        "-GPSDateTime",
+        "-SubSecDateTimeOriginal",
+        "-DateTimeOriginal",
+        "-OffsetTimeOriginal",
+        "-CreateDate",
+        "-MediaCreateDate",
+        "-TrackCreateDate",
+        "-FileModifyDate",
         "-FileType",
     ]
     command.extend(str(path) for path in files)
@@ -298,7 +367,49 @@ def read_gps_records(files: list[Path]) -> list[dict[str, Any]]:
     return records
 
 
-def coordinates_from_records(records: list[dict[str, Any]]) -> list[tuple[float, float]]:
+def parse_iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise LocationError(f"Invalid date '{value}'. Expected YYYY-MM-DD.") from exc
+
+
+def folder_date(folder_name: str) -> date | None:
+    try:
+        return date.fromisoformat(folder_name)
+    except ValueError:
+        return None
+
+
+def valid_coordinates(latitude: float, longitude: float, allow_zero_coordinates: bool) -> bool:
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        return False
+    if not allow_zero_coordinates and latitude == 0 and longitude == 0:
+        return False
+    return True
+
+
+def valid_capture_date(
+    captured_at: datetime,
+    minimum_capture_date: date,
+    current_folder_date: date | None,
+    folder_date_tolerance_days: int,
+) -> bool:
+    captured_date = captured_at.astimezone(timezone.utc).date()
+    if captured_date < minimum_capture_date:
+        return False
+    if current_folder_date and folder_date_tolerance_days >= 0:
+        return abs((captured_date - current_folder_date).days) <= folder_date_tolerance_days
+    return True
+
+
+def coordinates_from_records(
+    records: list[dict[str, Any]],
+    allow_zero_coordinates: bool,
+    minimum_capture_date: date,
+    current_folder_date: date | None,
+    folder_date_tolerance_days: int,
+) -> list[tuple[float, float]]:
     coordinates: list[tuple[float, float]] = []
 
     for record in records:
@@ -306,9 +417,99 @@ def coordinates_from_records(records: list[dict[str, Any]]) -> list[tuple[float,
         longitude = record.get("GPSLongitude")
         if latitude is None or longitude is None:
             continue
-        coordinates.append((float(latitude), float(longitude)))
+        latitude = float(latitude)
+        longitude = float(longitude)
+        if not valid_coordinates(latitude, longitude, allow_zero_coordinates):
+            continue
+        captured_at = captured_at_from_record(record)
+        if captured_at and not valid_capture_date(captured_at, minimum_capture_date, current_folder_date, folder_date_tolerance_days):
+            continue
+        coordinates.append((latitude, longitude))
 
     return coordinates
+
+
+def parse_exif_datetime(value: Any, offset: str | None = None, assume_utc: bool = False) -> datetime | None:
+    if not value:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if offset and re.match(r"^[+-]\d\d:\d\d$", offset) and not re.search(r"[+-]\d\d:\d\d$", text):
+        text = f"{text}{offset}"
+
+    for pattern in ("%Y:%m:%d %H:%M:%S.%f%z", "%Y:%m:%d %H:%M:%S%z", "%Y:%m:%d %H:%M:%S.%f", "%Y:%m:%d %H:%M:%S"):
+        try:
+            parsed = datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+
+        if parsed.tzinfo is None:
+            if assume_utc:
+                return parsed.replace(tzinfo=timezone.utc)
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    return None
+
+
+def captured_at_from_record(record: dict[str, Any]) -> datetime | None:
+    offset = record.get("OffsetTimeOriginal")
+    candidates = (
+        ("GPSDateTime", None, True),
+        ("SubSecDateTimeOriginal", offset, False),
+        ("DateTimeOriginal", offset, False),
+        ("CreateDate", None, True),
+        ("MediaCreateDate", None, True),
+        ("TrackCreateDate", None, True),
+        ("FileModifyDate", None, False),
+    )
+
+    for field, field_offset, assume_utc in candidates:
+        parsed = parse_exif_datetime(record.get(field), field_offset, assume_utc)
+        if parsed:
+            return parsed
+
+    return None
+
+
+def gpx_points_from_records(
+    records: list[dict[str, Any]],
+    allow_zero_coordinates: bool,
+    minimum_capture_date: date,
+    current_folder_date: date | None,
+    folder_date_tolerance_days: int,
+) -> list[GpxPoint]:
+    points: list[GpxPoint] = []
+
+    for record in records:
+        latitude = record.get("GPSLatitude")
+        longitude = record.get("GPSLongitude")
+        source_file = record.get("SourceFile")
+        captured_at = captured_at_from_record(record)
+        if latitude is None or longitude is None or not source_file or captured_at is None:
+            continue
+        latitude = float(latitude)
+        longitude = float(longitude)
+        if not valid_coordinates(latitude, longitude, allow_zero_coordinates):
+            continue
+        if not valid_capture_date(captured_at, minimum_capture_date, current_folder_date, folder_date_tolerance_days):
+            continue
+
+        points.append(
+            GpxPoint(
+                latitude=latitude,
+                longitude=longitude,
+                captured_at=captured_at,
+                source_file=str(source_file),
+            )
+        )
+
+    return sorted(points, key=lambda point: (point.captured_at, point.source_file))
 
 
 def distance_meters(first: tuple[float, float], second: tuple[float, float]) -> float:
@@ -383,30 +584,117 @@ def filter_clusters(
     return [cluster for cluster in clusters if cluster.count >= min_photos_per_location]
 
 
-def coordinates_by_folder(
+def simplify_gpx_points(
+    points: list[GpxPoint],
+    distance_meters_threshold: float,
+    time_seconds_threshold: int,
+) -> list[GpxPoint]:
+    if len(points) <= 2 or distance_meters_threshold <= 0 or time_seconds_threshold <= 0:
+        return points
+
+    simplified: list[GpxPoint] = []
+    index = 0
+    while index < len(points):
+        group = [points[index]]
+        index += 1
+
+        while index < len(points):
+            first = group[0]
+            candidate = points[index]
+            seconds = (candidate.captured_at - first.captured_at).total_seconds()
+            distance = distance_meters(
+                (first.latitude, first.longitude),
+                (candidate.latitude, candidate.longitude),
+            )
+            if seconds < 0 or seconds > time_seconds_threshold or distance > distance_meters_threshold:
+                break
+            group.append(candidate)
+            index += 1
+
+        simplified.append(group[0])
+        if len(group) > 1:
+            simplified.append(group[-1])
+
+    return unique_gpx_points(simplified)
+
+
+def unique_gpx_points(points: list[GpxPoint]) -> list[GpxPoint]:
+    result: list[GpxPoint] = []
+    seen: set[tuple[str, float, float, str]] = set()
+    for point in points:
+        key = (
+            point.captured_at.isoformat(),
+            round(point.latitude, 7),
+            round(point.longitude, 7),
+            point.source_file,
+        )
+        if key not in seen:
+            seen.add(key)
+            result.append(point)
+    return result
+
+
+def limit_gpx_points(points: list[GpxPoint], max_points: int) -> list[GpxPoint]:
+    if max_points <= 0 or len(points) <= max_points:
+        return points
+    if max_points == 1:
+        return [points[0]]
+    if max_points == 2:
+        return [points[0], points[-1]]
+
+    step = (len(points) - 1) / (max_points - 1)
+    indexes = {round(index * step) for index in range(max_points)}
+    indexes.add(0)
+    indexes.add(len(points) - 1)
+    return [points[index] for index in sorted(indexes)[:max_points]]
+
+
+def analyze_folders(
     folders: list[Path],
     extensions: set[str],
     args: argparse.Namespace,
     progress: Progress,
-) -> dict[str, list[LocationCluster]]:
-    grouped: dict[str, list[LocationCluster]] = {}
+) -> dict[str, FolderAnalysis]:
+    analyses: dict[str, FolderAnalysis] = {}
 
     for folder in folders:
         files = discover_media_files(folder, extensions)
         raw_coordinates: list[tuple[float, float]] = []
+        gpx_points: list[GpxPoint] = []
+        current_folder_date = folder_date(folder.name)
         progress.update(folder.name, 0, len(files))
 
         for start in range(0, len(files), args.exiftool_batch_size):
             batch = files[start : start + args.exiftool_batch_size]
             records = read_gps_records(batch)
-            raw_coordinates.extend(coordinates_from_records(records))
+            raw_coordinates.extend(
+                coordinates_from_records(
+                    records,
+                    args.allow_zero_coordinates,
+                    args.minimum_capture_date,
+                    current_folder_date,
+                    args.folder_date_tolerance_days,
+                )
+            )
+            gpx_points.extend(
+                gpx_points_from_records(
+                    records,
+                    args.allow_zero_coordinates,
+                    args.minimum_capture_date,
+                    current_folder_date,
+                    args.folder_date_tolerance_days,
+                )
+            )
             progress.update(folder.name, min(start + len(batch), len(files)), len(files))
 
         progress.clear()
         clusters = cluster_coordinates(raw_coordinates, args.cluster_radius_meters)
-        grouped[folder.name] = filter_clusters(clusters, args.min_photos_per_location)
+        analyses[folder.name] = FolderAnalysis(
+            clusters=filter_clusters(clusters, args.min_photos_per_location),
+            gpx_points=sorted(gpx_points, key=lambda point: (point.captured_at, point.source_file)),
+        )
 
-    return grouped
+    return analyses
 
 
 def cache_key(
@@ -669,6 +957,71 @@ def build_rows(
     return rows
 
 
+def gpx_time(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def safe_filename(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return safe.strip("._") or "track"
+
+
+def write_gpx_file(path: Path, folder_name: str, points: list[GpxPoint]) -> None:
+    gpx = ET.Element(
+        "gpx",
+        {
+            "version": "1.1",
+            "creator": "get-image-locations",
+            "xmlns": "http://www.topografix.com/GPX/1/1",
+        },
+    )
+    metadata = ET.SubElement(gpx, "metadata")
+    ET.SubElement(metadata, "name").text = folder_name
+    track = ET.SubElement(gpx, "trk")
+    ET.SubElement(track, "name").text = folder_name
+    segment = ET.SubElement(track, "trkseg")
+
+    for point in points:
+        track_point = ET.SubElement(
+            segment,
+            "trkpt",
+            {
+                "lat": f"{point.latitude:.8f}",
+                "lon": f"{point.longitude:.8f}",
+            },
+        )
+        ET.SubElement(track_point, "time").text = gpx_time(point.captured_at)
+        ET.SubElement(track_point, "name").text = Path(point.source_file).name
+
+    tree = ET.ElementTree(gpx)
+    ET.indent(tree, space="  ")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def write_gpx_files(
+    folders: list[Path],
+    analyses: dict[str, FolderAnalysis],
+    output_dir: Path,
+    args: argparse.Namespace,
+) -> dict[str, tuple[int, int]]:
+    written: dict[str, tuple[int, int]] = {}
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for folder in folders:
+        original_points = analyses.get(folder.name, FolderAnalysis([], [])).gpx_points
+        simplified_points = simplify_gpx_points(
+            original_points,
+            args.gpx_simplify_distance_meters,
+            args.gpx_simplify_time_seconds,
+        )
+        limited_points = limit_gpx_points(simplified_points, args.gpx_max_points)
+        write_gpx_file(output_dir / f"{safe_filename(folder.name)}.gpx", folder.name, limited_points)
+        written[folder.name] = (len(original_points), len(limited_points))
+
+    return written
+
+
 def write_csv(rows: list[list[str]], output: Path | None) -> None:
     stdout_writer = csv.writer(
         sys.stdout,
@@ -704,12 +1057,31 @@ def main() -> int:
             raise LocationError("--min-photos-per-location must be at least 1.")
         if not 0 <= args.geocode_zoom <= 18:
             raise LocationError("--geocode-zoom must be between 0 and 18.")
+        if args.gpx_only and not args.gpx_output_dir:
+            raise LocationError("--gpx-only requires --gpx-output-dir.")
+        if args.gpx_max_points < 0:
+            raise LocationError("--gpx-max-points cannot be negative.")
+        if args.gpx_simplify_distance_meters < 0:
+            raise LocationError("--gpx-simplify-distance-meters cannot be negative.")
+        if args.gpx_simplify_time_seconds < 0:
+            raise LocationError("--gpx-simplify-time-seconds cannot be negative.")
+        if args.folder_date_tolerance_days < -1:
+            raise LocationError("--folder-date-tolerance-days must be -1 or greater.")
+        args.minimum_capture_date = parse_iso_date(args.min_capture_date)
 
-        cache = load_cache(args.cache)
+        cache = {} if args.gpx_only else load_cache(args.cache)
         folders = discover_folders(args.root, selected)
-        coordinates = coordinates_by_folder(folders, extensions, args, progress)
-        rows = build_rows(folders, coordinates, args, cache)
-        write_csv(rows, args.output)
+        analyses = analyze_folders(folders, extensions, args, progress)
+
+        if args.gpx_output_dir:
+            written = write_gpx_files(folders, analyses, args.gpx_output_dir, args)
+            for folder_name, (original_count, written_count) in written.items():
+                print(f"GPX {folder_name}: {written_count}/{original_count} points written", file=sys.stderr)
+
+        if not args.gpx_only:
+            coordinates = {folder_name: analysis.clusters for folder_name, analysis in analyses.items()}
+            rows = build_rows(folders, coordinates, args, cache)
+            write_csv(rows, args.output)
     except LocationError as exc:
         progress.clear()
         print(f"error: {exc}", file=sys.stderr)

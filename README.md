@@ -51,7 +51,7 @@ Por defecto:
 - Busca GPS en HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, varios RAW, MOV y MP4.
 - Agrupa coordenadas cercanas con un radio de 1000 metros antes de geocodificar.
 - Permite ocultar ubicaciones con pocas fotos.
-- Usa Nominatim/OpenStreetMap para geocodificación inversa con detalle alto.
+- Usa Nominatim/OpenStreetMap para geocodificación inversa con detalle medio.
 - Imprime CSV por stdout.
 - Muestra el progreso por stderr para no mezclarlo con el CSV.
 
@@ -63,6 +63,81 @@ Por defecto:
 ```
 
 El script imprime siempre el resultado por stdout y, si pasas `--output`, también escribe el archivo.
+
+## Generar GPX para Lightroom
+
+Puedes generar un GPX por subcarpeta usando las coordenadas GPS y la hora de captura:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --gpx-output-dir gpx
+```
+
+Esto mantiene el CSV por stdout y escribe ficheros como `gpx/2026-06-02.gpx`. Si solo quieres generar GPX sin buscar nombres de ubicaciones ni imprimir CSV:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --gpx-output-dir gpx \
+  --gpx-only
+```
+
+Para respetar limites de puntos al importar en Lightroom:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --gpx-output-dir gpx \
+  --gpx-only \
+  --gpx-max-points 500
+```
+
+Antes de aplicar ese limite, el script simplifica tramos de puntos muy cercanos: si varios puntos consecutivos estan dentro de la distancia y tiempo indicados, conserva solo el primero y el ultimo del tramo.
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --gpx-output-dir gpx \
+  --gpx-only \
+  --gpx-simplify-distance-meters 25 \
+  --gpx-simplify-time-seconds 300
+```
+
+Valores por defecto:
+
+- `--gpx-simplify-distance-meters 25`
+- `--gpx-simplify-time-seconds 300`
+- `--gpx-max-points 0`, sin limite duro
+
+## Ignorar metadatos incorrectos
+
+El script descarta por defecto puntos claramente sospechosos:
+
+- Coordenadas fuera de rango.
+- Coordenadas `0,0`, tipicas de metadatos rotos.
+- Fechas anteriores a `2000-01-01`.
+- En carpetas con nombre `YYYY-MM-DD`, fotos cuya fecha de captura se aleje mas de 2 dias de esa fecha.
+
+Si tus carpetas no tienen fecha en el nombre, ese ultimo filtro no se aplica. Solo se activa cuando el nombre de la carpeta es exactamente una fecha como `2026-06-02`.
+
+Puedes ajustar estos filtros:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --min-capture-date 2020-01-01 \
+  --folder-date-tolerance-days 5
+```
+
+Para desactivar la comprobacion contra la fecha de carpeta:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --folder-date-tolerance-days -1
+```
+
+Si de verdad quieres conservar coordenadas `0,0`:
+
+```bash
+./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
+  --allow-zero-coordinates
+```
 
 ## Probar una sola carpeta
 
