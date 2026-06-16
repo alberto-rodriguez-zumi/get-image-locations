@@ -1,79 +1,79 @@
 # Get Image Locations
 
-Script de CLI para leer coordenadas GPS de fotos y videos organizados en subcarpetas, convertirlas en nombres de lugares y mostrar un resumen por carpeta.
+CLI script to read GPS coordinates from photos and videos organized in subfolders, turn them into place names, and print a per-folder summary.
 
-Ejemplo de salida:
+Example output:
 
 ```csv
 "2026-06-02";"Matsumoto, Azumino"
 ```
 
-## Dependencias
+## Dependencies
 
-No requiere paquetes de Python externos. Usa solo la biblioteca estándar de Python.
+No external Python packages are required. The script uses only the Python standard library.
 
-Necesitas:
+You need:
 
-- Python 3.10 o superior.
-- `exiftool`, para leer metadatos GPS de HEIC, JPEG, MOV, RAW, etc.
-- Conexión a internet si quieres convertir coordenadas en nombres de lugares.
+- Python 3.10 or newer
+- `exiftool`, to read GPS metadata from HEIC, JPEG, MOV, RAW, and similar formats
+- An internet connection if you want to convert coordinates into place names
 
-### Instalar en macOS
+### Install on macOS
 
 ```bash
 brew install exiftool
 ```
 
-Python 3 suele venir instalado en macOS. Si necesitas instalarlo:
+Python 3 is often already available on macOS. If you need to install it:
 
 ```bash
 brew install python
 ```
 
-### Instalar en Debian/Ubuntu
+### Install on Debian/Ubuntu
 
 ```bash
 sudo apt update
 sudo apt install libimage-exiftool-perl python3
 ```
 
-## Uso
+## Usage
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026"
 ```
 
-Aviso de privacidad: este modo envía coordenadas GPS redondeadas a Nominatim/OpenStreetMap para convertirlas en nombres de lugares. Si quieres trabajar solo en local, usa `--no-geocode`.
+Privacy note: this mode sends rounded GPS coordinates to Nominatim/OpenStreetMap in order to convert them into place names. If you want a fully local workflow, use `--no-geocode`.
 
-Por defecto:
+By default the script:
 
-- Lee las subcarpetas inmediatas de la carpeta raíz.
-- Busca GPS en HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, varios RAW, MOV y MP4.
-- Agrupa coordenadas cercanas con un radio de 1000 metros antes de geocodificar.
-- Permite ocultar ubicaciones con pocas fotos.
-- Usa Nominatim/OpenStreetMap para geocodificación inversa con detalle medio.
-- Imprime CSV por stdout.
-- Muestra el progreso por stderr para no mezclarlo con el CSV.
+- Reads immediate subfolders under the root folder
+- Scans HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, several RAW formats, MOV, and MP4
+- Groups nearby coordinates within a 1000 meter radius before geocoding
+- Can hide locations that have very few photos
+- Uses Nominatim/OpenStreetMap reverse geocoding with medium detail
+- Prints CSV to stdout
+- Shows progress on stderr so it does not pollute CSV output
 
-## Exportar a CSV
+## Export to CSV
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --output locations.csv
 ```
 
-El script imprime siempre el resultado por stdout y, si pasas `--output`, también escribe el archivo.
+The script always prints the result to stdout and, if you pass `--output`, also writes it to a file.
 
-## Generar GPX para Lightroom
+## Generate GPX for Lightroom
 
-Puedes generar un GPX por subcarpeta usando las coordenadas GPS y la hora de captura:
+You can generate one GPX file per subfolder using GPS coordinates and capture time:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --gpx-output-dir gpx
 ```
 
-Esto mantiene el CSV por stdout y escribe ficheros como `gpx/2026-06-02.gpx`. Si solo quieres generar GPX sin buscar nombres de ubicaciones ni imprimir CSV:
+This keeps CSV output on stdout and writes files such as `gpx/2026-06-02.gpx`. If you only want GPX files and do not want CSV or place-name lookup:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -81,7 +81,7 @@ Esto mantiene el CSV por stdout y escribe ficheros como `gpx/2026-06-02.gpx`. Si
   --gpx-only
 ```
 
-Para respetar limites de puntos al importar en Lightroom:
+To stay within Lightroom point limits:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -90,7 +90,7 @@ Para respetar limites de puntos al importar en Lightroom:
   --gpx-max-points 500
 ```
 
-Antes de aplicar ese limite, el script simplifica tramos de puntos muy cercanos: si varios puntos consecutivos estan dentro de la distancia y tiempo indicados, conserva solo el primero y el ultimo del tramo.
+Before applying that hard limit, the script simplifies runs of very close consecutive points: if several consecutive points stay within the configured distance and time window, it keeps only the first and last point of that run.
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -100,24 +100,24 @@ Antes de aplicar ese limite, el script simplifica tramos de puntos muy cercanos:
   --gpx-simplify-time-seconds 300
 ```
 
-Valores por defecto:
+Default values:
 
 - `--gpx-simplify-distance-meters 25`
 - `--gpx-simplify-time-seconds 300`
-- `--gpx-max-points 0`, sin limite duro
+- `--gpx-max-points 0`, meaning no hard limit
 
-## Ignorar metadatos incorrectos
+## Ignore bad metadata
 
-El script descarta por defecto puntos claramente sospechosos:
+By default, the script discards obviously suspicious points:
 
-- Coordenadas fuera de rango.
-- Coordenadas `0,0`, tipicas de metadatos rotos.
-- Fechas anteriores a `2000-01-01`.
-- En carpetas con nombre `YYYY-MM-DD`, fotos cuya fecha de captura se aleje mas de 2 dias de esa fecha.
+- Coordinates outside valid latitude/longitude ranges
+- Coordinates at `0,0`, which are common in broken metadata
+- Capture dates earlier than `2000-01-01`
+- In folders whose name matches `YYYY-MM-DD`, files whose capture date is more than 2 days away from that folder date
 
-Si tus carpetas no tienen fecha en el nombre, ese ultimo filtro no se aplica. Solo se activa cuando el nombre de la carpeta es exactamente una fecha como `2026-06-02`.
+If your folders do not contain dates in their names, that last filter does not apply. It is only enabled when the folder name is exactly a date such as `2026-06-02`.
 
-Puedes ajustar estos filtros:
+You can tune these filters:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -125,28 +125,28 @@ Puedes ajustar estos filtros:
   --folder-date-tolerance-days 5
 ```
 
-Para desactivar la comprobacion contra la fecha de carpeta:
+To disable the folder-date check entirely:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --folder-date-tolerance-days -1
 ```
 
-Si de verdad quieres conservar coordenadas `0,0`:
+If you really want to keep `0,0` coordinates:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --allow-zero-coordinates
 ```
 
-## Probar una sola carpeta
+## Process a Single Folder
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --folder 2026-06-02
 ```
 
-Puedes pasar varias carpetas:
+You can pass more than one folder:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -154,9 +154,9 @@ Puedes pasar varias carpetas:
   --folder 2026-06-02
 ```
 
-## Ver coordenadas sin usar internet
+## Show Coordinates Without Internet Access
 
-Esto sirve para comprobar que los metadatos GPS se leen bien:
+This is useful to verify that GPS metadata is being read correctly:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
@@ -164,142 +164,142 @@ Esto sirve para comprobar que los metadatos GPS se leen bien:
   --no-geocode
 ```
 
-Ejemplo:
+Example:
 
 ```csv
 "2026-06-02";"36.047,138.119, 36.048,138.122"
 ```
 
-## Caché de ubicaciones
+## Location Cache
 
-Las llamadas al servicio de mapas se guardan en `.geocode-cache.json` para no repetir consultas.
+Reverse geocoding results are stored in `.geocode-cache.json` so the script does not repeat the same lookups.
 
-Puedes cambiar la ruta:
+You can change the cache path:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
-  --cache cache-japon.json
+  --cache cache-japan.json
 ```
 
-## Progreso
+## Progress
 
-Mientras procesa, el script muestra la carpeta actual y el numero de archivos analizados:
+While processing, the script shows the current folder and the number of analyzed files:
 
 ```text
 Processing 2026-06-02: 100/248 files analyzed
 ```
 
-El progreso se escribe en stderr, no en stdout. Asi puedes redirigir el CSV sin contaminarlo:
+Progress is written to stderr, not stdout. That means you can redirect CSV output without contaminating it:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --output locations.csv
 ```
 
-Para ocultar el progreso:
+To hide progress:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --no-progress
 ```
 
-## Agrupar puntos cercanos
+## Group Nearby Points
 
-Para reducir llamadas al servicio de mapas, las coordenadas GPS cercanas se agrupan antes de geocodificar. Por defecto se agrupan puntos a menos de 1000 metros.
+To reduce calls to the map service, nearby GPS coordinates are grouped before geocoding. By default, points within 1000 meters are grouped together.
 
-Puedes ajustar el radio:
+You can adjust the radius:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --cluster-radius-meters 2500
 ```
 
-Para desactivar esta agrupacion:
+To disable this grouping:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --cluster-radius-meters 0
 ```
 
-## Ocultar ubicaciones con pocas fotos
+## Hide Locations With Very Few Photos
 
-Puedes pedir que una ubicacion solo aparezca si tiene un minimo de fotos o videos con GPS dentro del grupo:
+You can require a minimum number of GPS-tagged photos or videos for a location to appear in the output:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --min-photos-per-location 3
 ```
 
-Esto es util para descartar paradas logisticas, hoteles o tiendas con una o dos fotos sueltas. El filtro se aplica despues de agrupar por distancia, asi que una ubicacion se queda fuera antes de llamar al servicio de mapas.
+This is useful for removing logistical stops, hotels, or shops where you only took one or two stray pictures. The filter is applied after distance-based grouping, so those locations are dropped before any reverse geocoding call is made.
 
-## Ajustar precisión
+## Coordinate Precision
 
-El parametro `--coordinate-precision` controla cuantos decimales se muestran cuando usas `--no-geocode`:
+The `--coordinate-precision` parameter controls how many decimals are printed when you use `--no-geocode`:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --coordinate-precision 2
 ```
 
-Valores útiles:
+Useful values:
 
-- `2`: salida compacta, buena para inspeccion rapida.
-- `3`: mas detalle en coordenadas impresas.
-- `4`: mucho mas detalle si necesitas auditar puntos concretos.
+- `2`: compact output, good for quick inspection
+- `3`: more detail in printed coordinates
+- `4`: much more detail if you need to audit specific points
 
-## Idioma
+## Language
 
-Puedes pedir nombres localizados:
+You can ask for localized names:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --language es
 ```
 
-Por defecto usa `en`, que suele dar nombres más estables para exportaciones.
+By default it uses `en`, which tends to produce more stable export-friendly names.
 
-## Nivel de detalle de los nombres
+## Name Detail
 
-El script pide a Nominatim nombres de detalle medio por defecto. Intenta evitar direcciones postales como `Ginza 2`, `Kuramae 2-chome` o `Oshiage 1`, pero sigue priorizando puntos turisticos o historicos si OpenStreetMap los devuelve con nombre.
+By default, the script asks Nominatim for medium-detail names. It tries to avoid postal-style outputs such as `Ginza 2`, `Kuramae 2-chome`, or `Oshiage 1`, while still prioritizing tourist or historic places when OpenStreetMap provides them by name.
 
-Puedes ajustar el nivel con `--geocode-zoom`, de `0` a `18`:
+You can adjust the level with `--geocode-zoom`, from `0` to `18`:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --geocode-zoom 12
 ```
 
-Valores utiles:
+Useful values:
 
-- `10`: mas amplio, suele devolver provincia/comarca/municipio grande.
-- `12` o `14`: equilibrio entre ciudad, pueblo y zona; `12` es el valor por defecto.
-- `16`: mas especifico, puede funcionar para sitios concretos pero tambien sacar barrios numerados.
-- `18`: muy concreto, puede acabar devolviendo edificios, calles o objetos cercanos.
+- `10`: broader output, usually province/region/municipality
+- `12` or `14`: a good balance between city, town, and area; `12` is the default
+- `16`: more specific, useful in some cases but more likely to return numbered neighborhoods
+- `18`: very specific, and may end up returning buildings, streets, or other address-like objects
 
-Tambien puedes controlar que tipo de nombre se prefiere:
+You can also control what style of name is preferred:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --name-detail specific
 ```
 
-Modos:
+Modes:
 
-- `balanced`: valor por defecto; evita direcciones tipo `chome`.
-- `specific`: permite localidades pequeñas como `hamlet` o `locality`, pero sigue evitando direcciones.
-- `address`: permite nombres de direccion, barrios numerados y `chome`.
+- `balanced`: default; avoids address-like `chome` names
+- `specific`: allows smaller localities such as `hamlet` or `locality`, but still avoids address-style names
+- `address`: allows address-style names, numbered neighborhoods, and `chome`
 
-Por defecto se intentan evitar nombres en escritura local como kanji/kana si hay una alternativa romanizada o mas amplia. Si quieres conservar nombres locales:
+By default, the script tries to avoid local-script names such as kanji or kana when a romanized or broader alternative is available. If you want to keep local-script names:
 
 ```bash
 ./get_image_locations.py "/Volumes/Bichopalo/Lightroom - Japon Mayo 2026" \
   --allow-local-script
 ```
 
-La cache incluye el zoom, el modo de nombre y la preferencia de escritura en la clave, asi que cambiar estos parametros genera nuevas consultas sin reutilizar resultados antiguos demasiado amplios.
+The cache key includes zoom level, naming mode, and script preference, so changing those parameters triggers fresh lookups rather than reusing older results that were too broad or too specific.
 
-## Notas sobre Nominatim/OpenStreetMap
+## Notes About Nominatim/OpenStreetMap
 
-El script usa el endpoint público de Nominatim con una pausa de 1 segundo entre consultas nuevas, tal como recomienda el servicio. Para muchas fotos, la primera ejecución puede tardar; las siguientes serán más rápidas gracias a la caché.
+The script uses the public Nominatim endpoint and waits 1 second between new reverse-geocoding requests, following the service recommendations. For large libraries, the first run may take a while; later runs will be faster thanks to the cache.
 
-Si vas a procesar miles de coordenadas a menudo, conviene usar un servicio propio o un proveedor comercial de geocodificación inversa.
+If you plan to process thousands of coordinates regularly, it is worth considering your own geocoding service or a commercial reverse-geocoding provider.
