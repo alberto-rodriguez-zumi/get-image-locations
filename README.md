@@ -63,6 +63,7 @@ You need:
 - Python 3.10 or newer
 - `exiftool`, to read GPS metadata from HEIC, JPEG, MOV, RAW, and similar formats
 - Pillow, to render heatmap images
+- Tkinter, only if you want to use the graphical launcher
 - An internet connection if you want to convert coordinates into place names
   or render heatmap base maps from online tiles
 
@@ -84,12 +85,30 @@ Python 3 is often already available on macOS. If you need to install it:
 brew install python
 ```
 
+Tkinter is included with the official Python.org macOS installer. If you use a
+package manager Python, verify it with:
+
+```bash
+python3 -m tkinter
+```
+
+For Homebrew Python, install the matching Tkinter package if that command fails:
+
+```bash
+brew install python-tk@3.14
+```
+
+Adjust the version suffix to match your Homebrew Python version.
+
 ### Install on Debian/Ubuntu
 
 ```bash
 sudo apt update
-sudo apt install libimage-exiftool-perl python3
+sudo apt install libimage-exiftool-perl python3 python3-tk
 ```
+
+For WSL, use a distro with GUI support such as WSLg, then install the same
+Debian/Ubuntu packages.
 
 ## Usage
 
@@ -108,6 +127,23 @@ By default the script:
 - Uses Nominatim/OpenStreetMap reverse geocoding with medium detail
 - Prints CSV to stdout
 - Shows progress on stderr so it does not pollute CSV output
+
+## Graphical Launcher
+
+For users who are less comfortable with the terminal, there is a small Tkinter
+launcher:
+
+```bash
+./get_image_locations_gui.py
+```
+
+The GUI lets you choose the photo root folder, CSV output, GPX options, heatmap
+options, metadata filters, and map settings. It shows the command it will run,
+then launches `get_image_locations.py` in the background and streams the output
+inside the window.
+
+The launcher is intentionally a wrapper around the CLI script. That keeps the
+command-line workflow and the graphical workflow using the same implementation.
 
 ## Export to CSV
 
