@@ -3,3 +3,4 @@ __pycache__/
 .geocode-cache*.json
 docs/
 .tile-cache/
+get_image_locations.cfg

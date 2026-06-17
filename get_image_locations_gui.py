@@ -11,6 +11,8 @@ import sys
 import threading
 from typing import Callable
 
+from get_image_locations import CONFIG_PATH, load_config_defaults, save_config_defaults
+
 try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -72,56 +74,64 @@ class ImageLocationGui(tk.Tk):
         self.process: subprocess.Popen[str] | None = None
         self.run_id = 0
         self.output_queue: queue.Queue[tuple[str, str | None, int]] = queue.Queue()
+        self.config_defaults = load_config_defaults()
 
-        self.root_path = tk.StringVar()
-        self.csv_output = tk.StringVar()
-        self.folders = tk.StringVar()
-        self.excluded_folders = tk.StringVar()
-        self.cache_path = tk.StringVar(value=".geocode-cache.json")
-        self.language = tk.StringVar(value="en")
-        self.geocode_zoom = tk.StringVar(value="12")
-        self.name_detail = tk.StringVar(value="balanced")
-        self.coordinate_precision = tk.StringVar(value="2")
-        self.cluster_radius = tk.StringVar(value="1000")
-        self.min_photos = tk.StringVar(value="1")
-        self.no_geocode = tk.BooleanVar(value=False)
-        self.include_empty = tk.BooleanVar(value=False)
-        self.allow_local_script = tk.BooleanVar(value=False)
+        self.root_path = tk.StringVar(value=self._default_text("root"))
+        self.csv_output = tk.StringVar(value=self._default_text("output"))
+        self.folders = tk.StringVar(value=self._default_text("folder"))
+        self.excluded_folders = tk.StringVar(value=self._default_text("exclude_folder"))
+        self.cache_path = tk.StringVar(value=self._default_text("cache", ".geocode-cache.json"))
+        self.language = tk.StringVar(value=self._default_text("language", "en"))
+        self.geocode_zoom = tk.StringVar(value=self._default_text("geocode_zoom", "12"))
+        self.name_detail = tk.StringVar(value=self._default_text("name_detail", "balanced"))
+        self.coordinate_precision = tk.StringVar(value=self._default_text("coordinate_precision", "2"))
+        self.cluster_radius = tk.StringVar(value=self._default_text("cluster_radius_meters", "1000"))
+        self.min_photos = tk.StringVar(value=self._default_text("min_photos_per_location", "1"))
+        self.no_geocode = tk.BooleanVar(value=self._default_bool("no_geocode"))
+        self.include_empty = tk.BooleanVar(value=self._default_bool("include_empty"))
+        self.allow_local_script = tk.BooleanVar(value=self._default_bool("allow_local_script"))
 
-        self.extensions = tk.StringVar(value=DEFAULT_EXTENSIONS)
-        self.exiftool_batch_size = tk.StringVar(value="100")
-        self.min_capture_date = tk.StringVar(value="2000-01-01")
-        self.folder_date_tolerance = tk.StringVar(value="2")
-        self.allow_zero_coordinates = tk.BooleanVar(value=False)
+        self.extensions = tk.StringVar(value=self._default_text("extensions", DEFAULT_EXTENSIONS))
+        self.exiftool_batch_size = tk.StringVar(value=self._default_text("exiftool_batch_size", "100"))
+        self.min_capture_date = tk.StringVar(value=self._default_text("min_capture_date", "2000-01-01"))
+        self.folder_date_tolerance = tk.StringVar(value=self._default_text("folder_date_tolerance_days", "2"))
+        self.allow_zero_coordinates = tk.BooleanVar(value=self._default_bool("allow_zero_coordinates"))
 
-        self.gpx_enabled = tk.BooleanVar(value=False)
-        self.gpx_output_dir = tk.StringVar()
-        self.gpx_only = tk.BooleanVar(value=False)
-        self.gpx_max_points = tk.StringVar(value="0")
-        self.gpx_simplify_distance = tk.StringVar(value="25")
-        self.gpx_simplify_time = tk.StringVar(value="300")
+        self.gpx_output_dir = tk.StringVar(value=self._default_text("gpx_output_dir"))
+        self.gpx_only = tk.BooleanVar(value=self._default_bool("gpx_only"))
+        self.gpx_enabled = tk.BooleanVar(value=bool(self.gpx_output_dir.get() or self.gpx_only.get()))
+        self.gpx_max_points = tk.StringVar(value=self._default_text("gpx_max_points", "0"))
+        self.gpx_simplify_distance = tk.StringVar(value=self._default_text("gpx_simplify_distance_meters", "25"))
+        self.gpx_simplify_time = tk.StringVar(value=self._default_text("gpx_simplify_time_seconds", "300"))
 
-        self.heatmap_enabled = tk.BooleanVar(value=False)
-        self.heatmap_output = tk.StringVar()
-        self.heatmap_only = tk.BooleanVar(value=False)
-        self.heatmap_width = tk.StringVar(value="1600")
-        self.heatmap_aspect_ratio = tk.StringVar(value="16:9")
-        self.heatmap_orientation = tk.StringVar(value="landscape")
-        self.heatmap_cluster_radius = tk.StringVar(value="250")
-        self.heatmap_point_radius = tk.StringVar(value="6")
-        self.heatmap_blur = tk.StringVar(value="22")
-        self.heatmap_opacity = tk.StringVar(value="0.78")
-        self.heatmap_map_style = tk.StringVar(value="carto-light")
-        self.heatmap_tile_url = tk.StringVar()
-        self.heatmap_tile_cache = tk.StringVar(value=".tile-cache")
-        self.heatmap_use_country = tk.BooleanVar(value=False)
-        self.heatmap_country = tk.StringVar()
-        self.heatmap_use_bounds = tk.BooleanVar(value=False)
-        self.heatmap_bounds = tk.StringVar()
-        self.heatmap_padding = tk.StringVar(value="0.08")
-        self.heatmap_min_zoom = tk.StringVar(value="0")
-        self.heatmap_max_zoom = tk.StringVar(value="12")
-        self.heatmap_trim_outliers = tk.StringVar(value="0")
+        self.heatmap_output = tk.StringVar(value=self._default_text("heatmap_output"))
+        self.heatmap_only = tk.BooleanVar(value=self._default_bool("heatmap_only"))
+        self.heatmap_width = tk.StringVar(value=self._default_text("heatmap_width", "1600"))
+        self.heatmap_aspect_ratio = tk.StringVar(value=self._default_text("heatmap_aspect_ratio", "16:9"))
+        self.heatmap_orientation = tk.StringVar(value=self._default_text("heatmap_orientation", "landscape"))
+        self.heatmap_cluster_radius = tk.StringVar(value=self._default_text("heatmap_cluster_radius_meters", "250"))
+        self.heatmap_point_radius = tk.StringVar(value=self._default_text("heatmap_point_radius_pixels", "6"))
+        self.heatmap_blur = tk.StringVar(value=self._default_text("heatmap_blur_pixels", "22"))
+        self.heatmap_opacity = tk.StringVar(value=self._default_text("heatmap_opacity", "0.78"))
+        self.heatmap_map_style = tk.StringVar(value=self._default_text("heatmap_map_style", "carto-light"))
+        self.heatmap_tile_url = tk.StringVar(value=self._default_text("heatmap_tile_url"))
+        self.heatmap_tile_cache = tk.StringVar(value=self._default_text("heatmap_tile_cache", ".tile-cache"))
+        self.heatmap_country = tk.StringVar(value=self._default_text("heatmap_country"))
+        self.heatmap_use_country = tk.BooleanVar(value=bool(self.heatmap_country.get()))
+        self.heatmap_bounds = tk.StringVar(value=self._default_text("heatmap_bounds"))
+        self.heatmap_use_bounds = tk.BooleanVar(value=bool(self.heatmap_bounds.get()))
+        self.heatmap_padding = tk.StringVar(value=self._default_text("heatmap_padding_ratio", "0.08"))
+        self.heatmap_min_zoom = tk.StringVar(value=self._default_text("heatmap_min_zoom", "0"))
+        self.heatmap_max_zoom = tk.StringVar(value=self._default_text("heatmap_max_zoom", "12"))
+        self.heatmap_trim_outliers = tk.StringVar(value=self._default_text("heatmap_trim_edge_outliers_km", "0"))
+        self.heatmap_enabled = tk.BooleanVar(
+            value=bool(
+                self.heatmap_output.get()
+                or self.heatmap_only.get()
+                or self.heatmap_use_country.get()
+                or self.heatmap_use_bounds.get()
+            )
+        )
 
         self.command_preview = tk.StringVar()
 
@@ -247,6 +257,8 @@ class ImageLocationGui(tk.Tk):
         self.run_button.grid(row=0, column=1, padx=(0, 8))
         self.cancel_button = ttk.Button(button_frame, text="Cancel", command=self.cancel_command, state="disabled")
         self.cancel_button.grid(row=0, column=2)
+        self.save_defaults_button = ttk.Button(button_frame, text="Save Defaults", command=self.save_defaults)
+        self.save_defaults_button.grid(row=0, column=3, padx=(8, 0))
 
     def _entry_row(
         self,
@@ -276,6 +288,17 @@ class ImageLocationGui(tk.Tk):
 
     def _check_row(self, frame: ttk.Frame, row: int, label: str, variable: tk.BooleanVar) -> None:
         ttk.Checkbutton(frame, text=label, variable=variable).grid(row=row, column=1, sticky="w", pady=5)
+
+    def _default_text(self, name: str, fallback: str = "") -> str:
+        value = self.config_defaults.get(name, fallback)
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
+        return str(value) if value is not None else ""
+
+    def _default_bool(self, name: str, fallback: bool = False) -> bool:
+        return bool(self.config_defaults.get(name, fallback))
 
     def _trace_command_variables(self) -> None:
         for variable in self._all_variables():
@@ -333,7 +356,7 @@ class ImageLocationGui(tk.Tk):
 
     def build_command(self) -> list[str]:
         root = self.root_path.get().strip()
-        command = [sys.executable, str(SCRIPT_PATH)]
+        command = [sys.executable, str(SCRIPT_PATH), "--no-config"]
         if root:
             command.append(root)
 
@@ -412,6 +435,60 @@ class ImageLocationGui(tk.Tk):
 
     def refresh_command_preview(self) -> None:
         self.command_preview.set(shlex.join(self.build_command()))
+
+    def save_defaults(self) -> None:
+        values = {
+            "root": self.root_path.get().strip(),
+            "output": self.csv_output.get().strip(),
+            "folder": self._folder_values(),
+            "exclude_folder": self._excluded_folder_values(),
+            "cache": self.cache_path.get().strip(),
+            "coordinate_precision": self.coordinate_precision.get().strip(),
+            "cluster_radius_meters": self.cluster_radius.get().strip(),
+            "min_photos_per_location": self.min_photos.get().strip(),
+            "language": self.language.get().strip(),
+            "geocode_zoom": self.geocode_zoom.get().strip(),
+            "name_detail": self.name_detail.get().strip(),
+            "allow_local_script": self.allow_local_script.get(),
+            "no_geocode": self.no_geocode.get(),
+            "extensions": self.extensions.get().strip(),
+            "include_empty": self.include_empty.get(),
+            "exiftool_batch_size": self.exiftool_batch_size.get().strip(),
+            "gpx_output_dir": self.gpx_output_dir.get().strip() if self.gpx_enabled.get() else "",
+            "gpx_only": self.gpx_only.get(),
+            "gpx_max_points": self.gpx_max_points.get().strip(),
+            "gpx_simplify_distance_meters": self.gpx_simplify_distance.get().strip(),
+            "gpx_simplify_time_seconds": self.gpx_simplify_time.get().strip(),
+            "heatmap_output": self.heatmap_output.get().strip() if self.heatmap_enabled.get() else "",
+            "heatmap_only": self.heatmap_only.get(),
+            "heatmap_width": self.heatmap_width.get().strip(),
+            "heatmap_aspect_ratio": self.heatmap_aspect_ratio.get().strip(),
+            "heatmap_orientation": self.heatmap_orientation.get().strip(),
+            "heatmap_cluster_radius_meters": self.heatmap_cluster_radius.get().strip(),
+            "heatmap_point_radius_pixels": self.heatmap_point_radius.get().strip(),
+            "heatmap_blur_pixels": self.heatmap_blur.get().strip(),
+            "heatmap_opacity": self.heatmap_opacity.get().strip(),
+            "heatmap_map_style": self.heatmap_map_style.get().strip(),
+            "heatmap_tile_url": self.heatmap_tile_url.get().strip(),
+            "heatmap_tile_cache": self.heatmap_tile_cache.get().strip(),
+            "heatmap_country": self.heatmap_country.get().strip() if self.heatmap_use_country.get() else "",
+            "heatmap_bounds": self.heatmap_bounds.get().strip() if self.heatmap_use_bounds.get() else "",
+            "heatmap_padding_ratio": self.heatmap_padding.get().strip(),
+            "heatmap_min_zoom": self.heatmap_min_zoom.get().strip(),
+            "heatmap_max_zoom": self.heatmap_max_zoom.get().strip(),
+            "heatmap_trim_edge_outliers_km": self.heatmap_trim_outliers.get().strip(),
+            "min_capture_date": self.min_capture_date.get().strip(),
+            "folder_date_tolerance_days": self.folder_date_tolerance.get().strip(),
+            "allow_zero_coordinates": self.allow_zero_coordinates.get(),
+        }
+        try:
+            save_config_defaults(values)
+        except OSError as exc:
+            messagebox.showerror("Could not save defaults", f"Could not write {CONFIG_PATH}:\n{exc}")
+            return
+        self.config_defaults = load_config_defaults()
+        self.refresh_command_preview()
+        messagebox.showinfo("Defaults saved", f"Defaults saved to:\n{CONFIG_PATH}")
 
     def run_command(self) -> None:
         if self.process and self.process.poll() is None:
