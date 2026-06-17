@@ -87,6 +87,9 @@ This keeps CSV output on stdout and writes files such as `gpx/2026-06-02.gpx`. I
   --gpx-only
 ```
 
+You can combine `--gpx-only` with `--heatmap-output` if you want GPX files plus
+a heatmap image, but no CSV output.
+
 To stay within Lightroom point limits:
 
 ```bash
@@ -138,6 +141,9 @@ By default, the heatmap:
 - Uses a `16:9` landscape image
 - Uses `carto-light-nolabels` as the base map, which keeps labels low so the heatmap is easier to read
 - Caches downloaded map tiles in `.tile-cache/`
+
+`--heatmap-output` must be a `.png` file path. Use
+`--heatmap-aspect-ratio` for values such as `16:9`.
 
 ### Heatmap Cluster Size
 

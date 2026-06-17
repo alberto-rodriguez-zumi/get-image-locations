@@ -87,6 +87,7 @@ CHOME_MARKERS = ("chome", "-cho", "丁目")
 EARTH_RADIUS_METERS = 6_371_008.8
 WEB_MERCATOR_MAX_LATITUDE = 85.05112878
 TILE_SIZE = 256
+HEATMAP_OUTPUT_EXTENSION = ".png"
 
 HEATMAP_TILE_PROVIDERS = {
     "carto-light-nolabels": "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
@@ -262,7 +263,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gpx-only",
         action="store_true",
-        help="Only generate GPX files. Requires --gpx-output-dir and skips CSV/geocoding output.",
+        help="Generate GPX and skip CSV/geocoding summary output. Requires --gpx-output-dir.",
     )
     parser.add_argument(
         "--gpx-max-points",
@@ -1176,6 +1177,16 @@ def heatmap_dimensions(width: int, aspect_ratio: str, orientation: str) -> tuple
     return width, height
 
 
+def validate_heatmap_output_path(path: Path) -> None:
+    if path.suffix.casefold() == HEATMAP_OUTPUT_EXTENSION:
+        return
+
+    hint = ""
+    if re.fullmatch(r"\d+(?:\.\d+)?:\d+(?:\.\d+)?", str(path)):
+        hint = " Did you mean to use --heatmap-aspect-ratio and pass a PNG path to --heatmap-output?"
+    raise LocationError(f"--heatmap-output must be a .png file path.{hint}")
+
+
 def parse_heatmap_bounds(value: str) -> HeatmapBounds:
     parts = [part.strip() for part in value.split(",")]
     if len(parts) != 4:
@@ -1582,7 +1593,7 @@ def write_heatmap_image(
     )
     image = Image.alpha_composite(base, overlay).convert("RGB")
     args.heatmap_output.parent.mkdir(parents=True, exist_ok=True)
-    image.save(args.heatmap_output)
+    image.save(args.heatmap_output, format="PNG")
     return len(coordinates), cluster_count, trimmed_count, zoom, bounds
 
 
@@ -1625,6 +1636,8 @@ def main() -> int:
             raise LocationError("--gpx-only requires --gpx-output-dir.")
         if args.heatmap_only and not args.heatmap_output:
             raise LocationError("--heatmap-only requires --heatmap-output.")
+        if args.heatmap_output:
+            validate_heatmap_output_path(args.heatmap_output)
         if args.heatmap_only and args.gpx_only:
             raise LocationError("--heatmap-only cannot be combined with --gpx-only.")
         if args.gpx_max_points < 0:
