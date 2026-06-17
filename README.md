@@ -10,13 +10,19 @@ Example output:
 
 ## Dependencies
 
-No external Python packages are required. The script uses only the Python standard library.
-
 You need:
 
 - Python 3.10 or newer
 - `exiftool`, to read GPS metadata from HEIC, JPEG, MOV, RAW, and similar formats
+- Pillow, to render heatmap images
 - An internet connection if you want to convert coordinates into place names
+  or render heatmap base maps from online tiles
+
+Install the Python dependency:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
 
 ### Install on macOS
 
