@@ -112,6 +112,144 @@ Default values:
 - `--gpx-simplify-time-seconds 300`
 - `--gpx-max-points 0`, meaning no hard limit
 
+## Generate a Photo Heatmap Image
+
+You can generate a Google Photos-style heatmap image showing where the photos
+were taken:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png
+```
+
+This keeps the regular CSV output on stdout and writes the image to
+`japan-heatmap.png`. If you only want the image:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-only
+```
+
+By default, the heatmap:
+
+- Uses the same GPS metadata filters as CSV and GPX generation
+- Fits the map to the photo locations
+- Uses a `16:9` landscape image
+- Uses `carto-light-nolabels` as the base map, which keeps labels low so the heatmap is easier to read
+- Caches downloaded map tiles in `.tile-cache/`
+
+### Heatmap Cluster Size
+
+The heatmap first groups nearby photo points before drawing. A smaller cluster
+radius is more precise; a larger one creates broader heat areas:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-cluster-radius-meters 100
+```
+
+You can also make the visual heat spots thicker or thinner:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-point-radius-pixels 36 \
+  --heatmap-blur-pixels 28
+```
+
+### Heatmap Aspect Ratio and Orientation
+
+Set the output width and aspect ratio:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-square.png \
+  --heatmap-width 1800 \
+  --heatmap-aspect-ratio 1:1
+```
+
+For portrait images:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-portrait.png \
+  --heatmap-aspect-ratio 4:3 \
+  --heatmap-orientation portrait
+```
+
+Common values include `1:1`, `4:3`, `3:2`, `16:9`, `portrait`, and
+`landscape`.
+
+### Heatmap Bounds
+
+Automatic bounds are based on the photo locations. You can instead fit the map
+to a country:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-country.png \
+  --heatmap-country Japan
+```
+
+Country bounds use Nominatim/OpenStreetMap and are cached in the same geocode
+cache file.
+
+You can also pass explicit bounds as `south,west,north,east`:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-bounds.png \
+  --heatmap-bounds 30.0,129.0,46.0,146.0
+```
+
+### Ignore Trip Edge Outliers
+
+If the first or last part of the trip is very far from the main travel area,
+for example airport photos from another country, you can trim those chronological
+edge segments:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-trim-edge-outliers-km 1000
+```
+
+This only trims large jumps near the start or end of the chronological photo
+sequence. Use a high value for international-trip cleanup and `0` to disable it.
+
+### Heatmap Base Maps
+
+Available built-in base map styles:
+
+- `carto-light-nolabels`, default and low-label
+- `carto-light`
+- `carto-dark-nolabels`
+- `carto-voyager`
+- `osm`
+- `none`, useful for testing without internet access
+- `custom`
+
+Example:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-map-style carto-dark-nolabels
+```
+
+For providers such as MapTiler, pass a raster tile URL template:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-map-style custom \
+  --heatmap-tile-url "https://api.maptiler.com/maps/YOUR_STYLE/256/{z}/{x}/{y}.png?key=YOUR_KEY"
+```
+
+The URL must contain `{z}`, `{x}`, and `{y}` placeholders.
+
 ## Ignore bad metadata
 
 By default, the script discards obviously suspicious points:
