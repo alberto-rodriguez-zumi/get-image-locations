@@ -159,7 +159,7 @@ class ImageLocationGui(tk.Tk):
 
     def _build_input_tab(self, frame: ttk.Frame) -> None:
         self._entry_row(frame, 0, "Photo root folder", self.root_path, self._choose_root_folder)
-        self._entry_row(frame, 1, "CSV output file", self.csv_output, self._choose_csv_output)
+        self._entry_row(frame, 1, "Optional CSV output file", self.csv_output, self._choose_csv_output)
         self._entry_row(frame, 2, "Only these folders", self.folders)
 
         ttk.Label(

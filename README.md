@@ -137,10 +137,10 @@ launcher:
 ./get_image_locations_gui.py
 ```
 
-The GUI lets you choose the photo root folder, CSV output, GPX options, heatmap
-options, metadata filters, and map settings. It shows the command it will run,
-then launches `get_image_locations.py` in the background and streams the output
-inside the window.
+The GUI lets you choose the photo root folder, optional CSV output, GPX options,
+heatmap options, metadata filters, and map settings. It shows the command it
+will run, then launches `get_image_locations.py` in the background and streams
+the output inside the window.
 
 In the Heatmap tab, enable "Fit heatmap to a country" when you want the map
 framed to a country such as `Japan`. Leave it disabled to let the map fit the
