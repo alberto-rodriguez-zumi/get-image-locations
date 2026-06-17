@@ -142,6 +142,10 @@ options, metadata filters, and map settings. It shows the command it will run,
 then launches `get_image_locations.py` in the background and streams the output
 inside the window.
 
+In the Heatmap tab, enable "Fit heatmap to a country" when you want the map
+framed to a country such as `Japan`. Leave it disabled to let the map fit the
+photo locations automatically.
+
 The launcher is intentionally a wrapper around the CLI script. That keeps the
 command-line workflow and the graphical workflow using the same implementation.
 

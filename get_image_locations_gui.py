@@ -112,7 +112,9 @@ class ImageLocationGui(tk.Tk):
         self.heatmap_map_style = tk.StringVar(value="carto-light")
         self.heatmap_tile_url = tk.StringVar()
         self.heatmap_tile_cache = tk.StringVar(value=".tile-cache")
+        self.heatmap_use_country = tk.BooleanVar(value=False)
         self.heatmap_country = tk.StringVar()
+        self.heatmap_use_bounds = tk.BooleanVar(value=False)
         self.heatmap_bounds = tk.StringVar()
         self.heatmap_padding = tk.StringVar(value="0.08")
         self.heatmap_min_zoom = tk.StringVar(value="0")
@@ -200,12 +202,14 @@ class ImageLocationGui(tk.Tk):
         self._combo_row(frame, 10, "Map style", self.heatmap_map_style, MAP_STYLES)
         self._entry_row(frame, 11, "Custom tile URL", self.heatmap_tile_url)
         self._entry_row(frame, 12, "Tile cache folder", self.heatmap_tile_cache, self._choose_tile_cache_dir)
-        self._entry_row(frame, 13, "Country bounds", self.heatmap_country)
-        self._entry_row(frame, 14, "Explicit bounds", self.heatmap_bounds)
-        self._entry_row(frame, 15, "Padding ratio", self.heatmap_padding)
-        self._entry_row(frame, 16, "Min zoom", self.heatmap_min_zoom)
-        self._entry_row(frame, 17, "Max zoom", self.heatmap_max_zoom)
-        self._entry_row(frame, 18, "Trim edge outliers km", self.heatmap_trim_outliers)
+        self._check_row(frame, 13, "Fit heatmap to a country", self.heatmap_use_country)
+        self._entry_row(frame, 14, "Country name", self.heatmap_country)
+        self._check_row(frame, 15, "Use explicit bounds", self.heatmap_use_bounds)
+        self._entry_row(frame, 16, "Explicit bounds", self.heatmap_bounds)
+        self._entry_row(frame, 17, "Padding ratio", self.heatmap_padding)
+        self._entry_row(frame, 18, "Min zoom", self.heatmap_min_zoom)
+        self._entry_row(frame, 19, "Max zoom", self.heatmap_max_zoom)
+        self._entry_row(frame, 20, "Trim edge outliers km", self.heatmap_trim_outliers)
 
     def _build_advanced_tab(self, frame: ttk.Frame) -> None:
         self._entry_row(frame, 0, "Cache file", self.cache_path, self._choose_cache_file)
@@ -313,7 +317,9 @@ class ImageLocationGui(tk.Tk):
             self.heatmap_map_style,
             self.heatmap_tile_url,
             self.heatmap_tile_cache,
+            self.heatmap_use_country,
             self.heatmap_country,
+            self.heatmap_use_bounds,
             self.heatmap_bounds,
             self.heatmap_padding,
             self.heatmap_min_zoom,
@@ -363,8 +369,10 @@ class ImageLocationGui(tk.Tk):
             self._append_option(command, "--heatmap-map-style", self.heatmap_map_style, default="carto-light")
             self._append_option(command, "--heatmap-tile-url", self.heatmap_tile_url)
             self._append_option(command, "--heatmap-tile-cache", self.heatmap_tile_cache, default=".tile-cache")
-            self._append_option(command, "--heatmap-country", self.heatmap_country)
-            self._append_option(command, "--heatmap-bounds", self.heatmap_bounds)
+            if self.heatmap_use_country.get():
+                self._append_option(command, "--heatmap-country", self.heatmap_country)
+            if self.heatmap_use_bounds.get():
+                self._append_option(command, "--heatmap-bounds", self.heatmap_bounds)
             self._append_option(command, "--heatmap-padding-ratio", self.heatmap_padding, default="0.08")
             self._append_option(command, "--heatmap-min-zoom", self.heatmap_min_zoom, default="0")
             self._append_option(command, "--heatmap-max-zoom", self.heatmap_max_zoom, default="12")
@@ -416,6 +424,15 @@ class ImageLocationGui(tk.Tk):
             return
         if self.heatmap_only.get() and self.gpx_only.get():
             messagebox.showerror("Incompatible modes", "Heatmap-only and GPX-only cannot be enabled together.")
+            return
+        if self.heatmap_enabled.get() and self.heatmap_use_country.get() and not self.heatmap_country.get().strip():
+            messagebox.showerror("Missing country", "Enter a country name or disable 'Fit heatmap to a country'.")
+            return
+        if self.heatmap_enabled.get() and self.heatmap_use_bounds.get() and not self.heatmap_bounds.get().strip():
+            messagebox.showerror("Missing bounds", "Enter explicit bounds or disable 'Use explicit bounds'.")
+            return
+        if self.heatmap_enabled.get() and self.heatmap_use_country.get() and self.heatmap_use_bounds.get():
+            messagebox.showerror("Incompatible heatmap bounds", "Use either country bounds or explicit bounds, not both.")
             return
 
         command = self.build_command()
