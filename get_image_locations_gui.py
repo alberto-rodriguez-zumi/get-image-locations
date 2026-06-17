@@ -76,6 +76,7 @@ class ImageLocationGui(tk.Tk):
         self.root_path = tk.StringVar()
         self.csv_output = tk.StringVar()
         self.folders = tk.StringVar()
+        self.excluded_folders = tk.StringVar()
         self.cache_path = tk.StringVar(value=".geocode-cache.json")
         self.language = tk.StringVar(value="en")
         self.geocode_zoom = tk.StringVar(value="12")
@@ -162,15 +163,16 @@ class ImageLocationGui(tk.Tk):
         self._entry_row(frame, 0, "Photo root folder", self.root_path, self._choose_root_folder)
         self._entry_row(frame, 1, "Optional CSV output file", self.csv_output, self._choose_csv_output)
         self._entry_row(frame, 2, "Only these folders", self.folders)
+        self._entry_row(frame, 3, "Excluded folders", self.excluded_folders)
 
         ttk.Label(
             frame,
-            text="Use comma-separated folder names, for example: 2026-06-01, 2026-06-02",
+            text="Use comma-separated folder names. Exclusions are applied after the optional folder selection.",
             foreground="#555",
-        ).grid(row=3, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 8))
 
-        self._check_row(frame, 4, "Print coordinates instead of place names", self.no_geocode)
-        self._check_row(frame, 5, "Include folders without GPS locations", self.include_empty)
+        self._check_row(frame, 5, "Print coordinates instead of place names", self.no_geocode)
+        self._check_row(frame, 6, "Include folders without GPS locations", self.include_empty)
 
     def _build_location_tab(self, frame: ttk.Frame) -> None:
         self._entry_row(frame, 0, "Language", self.language)
@@ -284,6 +286,7 @@ class ImageLocationGui(tk.Tk):
             self.root_path,
             self.csv_output,
             self.folders,
+            self.excluded_folders,
             self.cache_path,
             self.language,
             self.geocode_zoom,
@@ -337,6 +340,8 @@ class ImageLocationGui(tk.Tk):
         self._append_option(command, "--output", self.csv_output)
         for folder in self._folder_values():
             command.extend(["--folder", folder])
+        for folder in self._excluded_folder_values():
+            command.extend(["--exclude-folder", folder])
         self._append_option(command, "--cache", self.cache_path, default=".geocode-cache.json")
         self._append_option(command, "--coordinate-precision", self.coordinate_precision, default="2")
         self._append_option(command, "--cluster-radius-meters", self.cluster_radius, default="1000")
@@ -401,6 +406,9 @@ class ImageLocationGui(tk.Tk):
 
     def _folder_values(self) -> list[str]:
         return [folder.strip() for folder in self.folders.get().split(",") if folder.strip()]
+
+    def _excluded_folder_values(self) -> list[str]:
+        return [folder.strip() for folder in self.excluded_folders.get().split(",") if folder.strip()]
 
     def refresh_command_preview(self) -> None:
         self.command_preview.set(shlex.join(self.build_command()))
