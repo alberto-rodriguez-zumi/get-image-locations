@@ -319,8 +319,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--heatmap-point-radius-pixels",
         type=int,
-        default=28,
-        help="Visual radius for each heatmap cluster before blur. Larger values make thicker heat spots. Default: 28.",
+        default=6,
+        help="Visual radius for each heatmap cluster before blur. Larger values make thicker heat spots. Default: 6.",
     )
     parser.add_argument(
         "--heatmap-blur-pixels",
@@ -337,8 +337,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--heatmap-map-style",
         choices=tuple(HEATMAP_TILE_PROVIDERS),
-        default="carto-light-nolabels",
-        help="Base map style. Default: carto-light-nolabels.",
+        default="carto-light",
+        help="Base map style. Default: carto-light.",
     )
     parser.add_argument(
         "--heatmap-tile-url",

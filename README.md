@@ -8,6 +8,54 @@ Example output:
 "2026-06-02";"Matsumoto, Azumino"
 ```
 
+## Parameters
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `root` | Required | Root folder containing the photo/video subfolders. |
+| `-o`, `--output` | None | Optional CSV output path. Rows are always printed to stdout too. |
+| `--folder` | None | Only process this immediate subfolder name. Can be passed multiple times. |
+| `--cache` | `.geocode-cache.json` | JSON cache for reverse geocoding and country-bound lookup results. |
+| `--coordinate-precision` | `2` | Decimals used when printing coordinates with `--no-geocode`. |
+| `--cluster-radius-meters` | `1000` | Merge GPS points within this distance before reverse geocoding. Use `0` to disable. |
+| `--min-photos-per-location` | `1` | Hide clustered locations with fewer GPS media files than this. |
+| `--language` | `en` | Preferred language for location names. |
+| `--geocode-zoom` | `12` | Reverse geocoder detail level from `0` to `18`. Higher is more specific. |
+| `--name-detail` | `balanced` | Location-name specificity. Choices: `balanced`, `specific`, `address`. |
+| `--allow-local-script` | `false` | Allow local-script names such as Japanese kanji/kana when no romanized name is available. |
+| `--user-agent` | `get-image-locations/1.0` | User-Agent sent to map/geocoding services. |
+| `--no-geocode` | `false` | Print rounded coordinates instead of calling the reverse geocoder. |
+| `--extensions` | `heic,heif,jpg,jpeg,png,tif,tiff,dng,cr2,cr3,nef,arw,raf,rw2,orf,mov,mp4` | Comma-separated file extensions to scan. |
+| `--include-empty` | `false` | Include folders that have no GPS locations. |
+| `--no-progress` | `false` | Disable progress messages on stderr. |
+| `--exiftool-batch-size` | `100` | Number of files passed to each `exiftool` call. |
+| `--gpx-output-dir` | None | Optional folder where one GPX track per input subfolder will be written. |
+| `--gpx-only` | `false` | Generate GPX and skip CSV/geocoding summary output. Requires `--gpx-output-dir`. |
+| `--gpx-max-points` | `0` | Maximum points per generated GPX. Use `0` for no hard limit. |
+| `--gpx-simplify-distance-meters` | `25` | Collapse consecutive GPX points within this distance. |
+| `--gpx-simplify-time-seconds` | `300` | Collapse consecutive GPX points within this time gap. |
+| `--heatmap-output` | None | Optional `.png` output path for a Google Photos-style photo heatmap. |
+| `--heatmap-only` | `false` | Only generate the heatmap image. Requires `--heatmap-output` and skips CSV/GPX output. |
+| `--heatmap-width` | `1600` | Heatmap image width in pixels. Height is derived from aspect ratio. |
+| `--heatmap-aspect-ratio` | `16:9` | Heatmap aspect ratio, such as `1:1`, `4:3`, `3:2`, `16:9`, `portrait`, or `landscape`. |
+| `--heatmap-orientation` | `landscape` | Image orientation applied to non-square aspect ratios. Choices: `landscape`, `portrait`. |
+| `--heatmap-cluster-radius-meters` | `250` | Merge heatmap photo points within this distance before drawing. Use `0` to disable. |
+| `--heatmap-point-radius-pixels` | `6` | Visual radius for each heatmap cluster before blur. Larger values make thicker heat spots. |
+| `--heatmap-blur-pixels` | `22` | Gaussian blur radius for the heatmap overlay. |
+| `--heatmap-opacity` | `0.78` | Maximum heatmap overlay opacity from `0` to `1`. |
+| `--heatmap-map-style` | `carto-light` | Base map style. Choices: `carto-light-nolabels`, `carto-light`, `carto-dark-nolabels`, `carto-voyager`, `osm`, `none`, `custom`. |
+| `--heatmap-tile-url` | None | Custom raster tile URL template with `{z}`, `{x}`, and `{y}`. Use with `--heatmap-map-style custom`. |
+| `--heatmap-tile-cache` | `.tile-cache` | Folder used to cache downloaded map tiles. |
+| `--heatmap-country` | None | Fit the map to this country name using Nominatim bounds instead of photo bounds. |
+| `--heatmap-bounds` | None | Fit the map to explicit bounds as `south,west,north,east` or `lat1,lon1,lat2,lon2`. |
+| `--heatmap-padding-ratio` | `0.08` | Extra padding around automatic photo bounds. |
+| `--heatmap-min-zoom` | `0` | Minimum map tile zoom for heatmap rendering. |
+| `--heatmap-max-zoom` | `12` | Maximum map tile zoom for heatmap rendering. |
+| `--heatmap-trim-edge-outliers-km` | `0` | Trim chronological start/end trip segments separated by at least this distance. Use `0` to disable. |
+| `--min-capture-date` | `2000-01-01` | Ignore media captured before this date. |
+| `--folder-date-tolerance-days` | `2` | Ignore dated-folder media captured more than this many days away from the folder date. Use `-1` to disable. |
+| `--allow-zero-coordinates` | `false` | Keep GPS points at `0,0` instead of treating them as invalid. |
+
 ## Dependencies
 
 You need:
@@ -139,7 +187,7 @@ By default, the heatmap:
 - Uses the same GPS metadata filters as CSV and GPX generation
 - Fits the map to the photo locations
 - Uses a `16:9` landscape image
-- Uses `carto-light-nolabels` as the base map, which keeps labels low so the heatmap is easier to read
+- Uses `carto-light` as the base map
 - Caches downloaded map tiles in `.tile-cache/`
 
 `--heatmap-output` must be a `.png` file path. Use
