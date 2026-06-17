@@ -70,7 +70,8 @@ class ImageLocationGui(tk.Tk):
         self.minsize(820, 620)
 
         self.process: subprocess.Popen[str] | None = None
-        self.output_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
+        self.run_id = 0
+        self.output_queue: queue.Queue[tuple[str, str | None, int]] = queue.Queue()
 
         self.root_path = tk.StringVar()
         self.csv_output = tk.StringVar()
@@ -405,8 +406,9 @@ class ImageLocationGui(tk.Tk):
         self.command_preview.set(shlex.join(self.build_command()))
 
     def run_command(self) -> None:
-        if self.process:
+        if self.process and self.process.poll() is None:
             return
+        self._mark_process_finished()
         if not self.root_path.get().strip():
             messagebox.showerror("Missing root folder", "Choose the folder containing your photo subfolders.")
             return
@@ -435,15 +437,11 @@ class ImageLocationGui(tk.Tk):
             messagebox.showerror("Incompatible heatmap bounds", "Use either country bounds or explicit bounds, not both.")
             return
 
+        self.run_id += 1
+        run_id = self.run_id
         command = self.build_command()
         self.output_text.delete("1.0", "end")
         self._append_output("$ " + shlex.join(command) + "\n\n")
-        self.run_button.configure(state="disabled")
-        self.cancel_button.configure(state="normal")
-        thread = threading.Thread(target=self._run_process, args=(command,), daemon=True)
-        thread.start()
-
-    def _run_process(self, command: list[str]) -> None:
         try:
             self.process = subprocess.Popen(
                 command,
@@ -452,32 +450,69 @@ class ImageLocationGui(tk.Tk):
                 text=True,
                 bufsize=1,
             )
-            assert self.process.stdout is not None
-            for line in self.process.stdout:
-                self.output_queue.put(("output", line))
-            return_code = self.process.wait()
-            self.output_queue.put(("done", f"\nFinished with exit code {return_code}\n"))
         except OSError as exc:
-            self.output_queue.put(("done", f"\nCould not run command: {exc}\n"))
+            self._append_output(f"Could not run command: {exc}\n")
+            self._mark_process_finished()
+            return
+
+        self.run_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        thread = threading.Thread(target=self._read_process_output, args=(self.process, run_id), daemon=True)
+        thread.start()
+        self.after(250, self._poll_process_completion)
+
+    def _read_process_output(self, process: subprocess.Popen[str], run_id: int) -> None:
+        done_message_sent = False
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                self.output_queue.put(("output", line, run_id))
+            return_code = process.wait()
+            self.output_queue.put(("done", f"\nFinished with exit code {return_code}\n", run_id))
+            done_message_sent = True
+        except OSError as exc:
+            self.output_queue.put(("done", f"\nCould not run command: {exc}\n", run_id))
+            done_message_sent = True
+        except Exception as exc:
+            self.output_queue.put(("done", f"\nUnexpected launcher error: {exc}\n", run_id))
+            done_message_sent = True
+        finally:
+            if process.poll() is None:
+                process.wait()
+            if not done_message_sent:
+                self.output_queue.put(("done", "\nCommand finished.\n", run_id))
 
     def cancel_command(self) -> None:
         if self.process and self.process.poll() is None:
             self.process.terminate()
             self._append_output("\nCancellation requested...\n")
 
+    def _poll_process_completion(self) -> None:
+        if not self.process:
+            return
+        if self.process.poll() is None:
+            self.after(250, self._poll_process_completion)
+            return
+        self._mark_process_finished()
+
     def _drain_output_queue(self) -> None:
         try:
             while True:
-                kind, text = self.output_queue.get_nowait()
+                kind, text, run_id = self.output_queue.get_nowait()
+                if run_id != self.run_id:
+                    continue
                 if text:
                     self._append_output(text)
                 if kind == "done":
-                    self.process = None
-                    self.run_button.configure(state="normal")
-                    self.cancel_button.configure(state="disabled")
+                    self._mark_process_finished()
         except queue.Empty:
             pass
         self.after(100, self._drain_output_queue)
+
+    def _mark_process_finished(self) -> None:
+        self.process = None
+        self.run_button.configure(state="normal")
+        self.cancel_button.configure(state="disabled")
 
     def _append_output(self, text: str) -> None:
         self.output_text.insert("end", text)
