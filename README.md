@@ -15,6 +15,7 @@ Example output:
 | `root` | Required | Root folder containing the photo/video subfolders. |
 | `-o`, `--output` | None | Optional CSV output path. Rows are always printed to stdout too. |
 | `--folder` | None | Only process this immediate subfolder name. Can be passed multiple times. |
+| `--exclude-folder` | None | Skip this immediate subfolder name. Can be passed multiple times. |
 | `--cache` | `.geocode-cache.json` | JSON cache for reverse geocoding and country-bound lookup results. |
 | `--coordinate-precision` | `2` | Decimals used when printing coordinates with `--no-geocode`. |
 | `--cluster-radius-meters` | `1000` | Merge GPS points within this distance before reverse geocoding. Use `0` to disable. |
@@ -391,6 +392,17 @@ You can pass more than one folder:
   --folder 2026-06-01 \
   --folder 2026-06-02
 ```
+
+You can also skip one or more immediate subfolders:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --exclude-folder 2026-05-25 \
+  --exclude-folder 2026-06-14
+```
+
+`--exclude-folder` can be combined with `--folder`; exclusions are applied after
+the folder selection.
 
 ## Show Coordinates Without Internet Access
 
