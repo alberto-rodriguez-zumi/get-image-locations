@@ -2,3 +2,4 @@ __pycache__/
 *.py[cod]
 .geocode-cache*.json
 docs/
+.tile-cache/

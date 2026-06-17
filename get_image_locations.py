@@ -13,6 +13,7 @@ import argparse
 import csv
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from io import BytesIO
 import json
 import math
 from pathlib import Path
@@ -84,6 +85,19 @@ LOCAL_SCRIPT_RANGES = (
 CHOME_MARKERS = ("chome", "-cho", "丁目")
 
 EARTH_RADIUS_METERS = 6_371_008.8
+WEB_MERCATOR_MAX_LATITUDE = 85.05112878
+TILE_SIZE = 256
+HEATMAP_OUTPUT_EXTENSION = ".png"
+
+HEATMAP_TILE_PROVIDERS = {
+    "carto-light-nolabels": "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    "carto-light": "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    "carto-dark-nolabels": "https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+    "carto-voyager": "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+    "osm": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "none": "",
+    "custom": "",
+}
 
 
 class LocationError(RuntimeError):
@@ -107,8 +121,17 @@ class GpxPoint:
 
 @dataclass(frozen=True)
 class FolderAnalysis:
+    coordinates: list[tuple[float, float]]
     clusters: list[LocationCluster]
     gpx_points: list[GpxPoint]
+
+
+@dataclass(frozen=True)
+class HeatmapBounds:
+    south: float
+    west: float
+    north: float
+    east: float
 
 
 class Progress:
@@ -240,7 +263,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gpx-only",
         action="store_true",
-        help="Only generate GPX files. Requires --gpx-output-dir and skips CSV/geocoding output.",
+        help="Generate GPX and skip CSV/geocoding summary output. Requires --gpx-output-dir.",
     )
     parser.add_argument(
         "--gpx-max-points",
@@ -259,6 +282,105 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=300,
         help="Collapse consecutive GPX points within this time gap. Default: 300.",
+    )
+    parser.add_argument(
+        "--heatmap-output",
+        type=Path,
+        help="Optional PNG output path for a Google Photos-style photo heatmap.",
+    )
+    parser.add_argument(
+        "--heatmap-only",
+        action="store_true",
+        help="Only generate the heatmap image. Requires --heatmap-output and skips CSV/GPX output.",
+    )
+    parser.add_argument(
+        "--heatmap-width",
+        type=int,
+        default=1600,
+        help="Heatmap image width in pixels. Height is derived from aspect ratio. Default: 1600.",
+    )
+    parser.add_argument(
+        "--heatmap-aspect-ratio",
+        default="16:9",
+        help="Heatmap aspect ratio, such as 1:1, 4:3, 3:2, 16:9, portrait, or landscape. Default: 16:9.",
+    )
+    parser.add_argument(
+        "--heatmap-orientation",
+        choices=("landscape", "portrait"),
+        default="landscape",
+        help="Image orientation applied to non-square aspect ratios. Default: landscape.",
+    )
+    parser.add_argument(
+        "--heatmap-cluster-radius-meters",
+        type=float,
+        default=250.0,
+        help="Merge heatmap photo points within this distance before drawing. Use 0 to disable. Default: 250.",
+    )
+    parser.add_argument(
+        "--heatmap-point-radius-pixels",
+        type=int,
+        default=6,
+        help="Visual radius for each heatmap cluster before blur. Larger values make thicker heat spots. Default: 6.",
+    )
+    parser.add_argument(
+        "--heatmap-blur-pixels",
+        type=int,
+        default=22,
+        help="Gaussian blur radius for the heatmap overlay. Default: 22.",
+    )
+    parser.add_argument(
+        "--heatmap-opacity",
+        type=float,
+        default=0.78,
+        help="Maximum heatmap overlay opacity from 0 to 1. Default: 0.78.",
+    )
+    parser.add_argument(
+        "--heatmap-map-style",
+        choices=tuple(HEATMAP_TILE_PROVIDERS),
+        default="carto-light",
+        help="Base map style. Default: carto-light.",
+    )
+    parser.add_argument(
+        "--heatmap-tile-url",
+        help="Custom raster tile URL template with {z}, {x}, and {y}. Use with --heatmap-map-style custom.",
+    )
+    parser.add_argument(
+        "--heatmap-tile-cache",
+        type=Path,
+        default=Path(".tile-cache"),
+        help="Folder used to cache downloaded map tiles. Default: .tile-cache",
+    )
+    parser.add_argument(
+        "--heatmap-country",
+        help="Fit the map to this country name using Nominatim bounds instead of photo bounds.",
+    )
+    parser.add_argument(
+        "--heatmap-bounds",
+        help="Fit the map to explicit bounds as south,west,north,east or lat1,lon1,lat2,lon2.",
+    )
+    parser.add_argument(
+        "--heatmap-padding-ratio",
+        type=float,
+        default=0.08,
+        help="Extra padding around automatic photo bounds. Default: 0.08.",
+    )
+    parser.add_argument(
+        "--heatmap-min-zoom",
+        type=int,
+        default=0,
+        help="Minimum map tile zoom for heatmap rendering. Default: 0.",
+    )
+    parser.add_argument(
+        "--heatmap-max-zoom",
+        type=int,
+        default=12,
+        help="Maximum map tile zoom for heatmap rendering. Default: 12.",
+    )
+    parser.add_argument(
+        "--heatmap-trim-edge-outliers-km",
+        type=float,
+        default=0.0,
+        help="Trim chronological start/end trip segments separated by at least this distance. Use 0 to disable. Default: 0.",
     )
     parser.add_argument(
         "--min-capture-date",
@@ -690,6 +812,7 @@ def analyze_folders(
         progress.clear()
         clusters = cluster_coordinates(raw_coordinates, args.cluster_radius_meters)
         analyses[folder.name] = FolderAnalysis(
+            coordinates=raw_coordinates,
             clusters=filter_clusters(clusters, args.min_photos_per_location),
             gpx_points=sorted(gpx_points, key=lambda point: (point.captured_at, point.source_file)),
         )
@@ -1009,7 +1132,7 @@ def write_gpx_files(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for folder in folders:
-        original_points = analyses.get(folder.name, FolderAnalysis([], [])).gpx_points
+        original_points = analyses.get(folder.name, FolderAnalysis([], [], [])).gpx_points
         simplified_points = simplify_gpx_points(
             original_points,
             args.gpx_simplify_distance_meters,
@@ -1020,6 +1143,458 @@ def write_gpx_files(
         written[folder.name] = (len(original_points), len(limited_points))
 
     return written
+
+
+def parse_heatmap_aspect_ratio(value: str) -> tuple[int, int]:
+    normalized = value.strip().lower()
+    if normalized == "landscape":
+        return 4, 3
+    if normalized == "portrait":
+        return 3, 4
+
+    match = re.fullmatch(r"(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)", normalized)
+    if not match:
+        raise LocationError(
+            "Invalid --heatmap-aspect-ratio. Use values like 1:1, 4:3, 3:2, 16:9, portrait, or landscape."
+        )
+
+    width_ratio = float(match.group(1))
+    height_ratio = float(match.group(2))
+    if width_ratio <= 0 or height_ratio <= 0:
+        raise LocationError("--heatmap-aspect-ratio values must be greater than zero.")
+
+    return int(width_ratio * 1000), int(height_ratio * 1000)
+
+
+def heatmap_dimensions(width: int, aspect_ratio: str, orientation: str) -> tuple[int, int]:
+    ratio_width, ratio_height = parse_heatmap_aspect_ratio(aspect_ratio)
+    if orientation == "portrait" and ratio_width > ratio_height:
+        ratio_width, ratio_height = ratio_height, ratio_width
+    if orientation == "landscape" and ratio_height > ratio_width:
+        ratio_width, ratio_height = ratio_height, ratio_width
+
+    height = max(1, round(width * ratio_height / ratio_width))
+    return width, height
+
+
+def validate_heatmap_output_path(path: Path) -> None:
+    if path.suffix.casefold() == HEATMAP_OUTPUT_EXTENSION:
+        return
+
+    hint = ""
+    if re.fullmatch(r"\d+(?:\.\d+)?:\d+(?:\.\d+)?", str(path)):
+        hint = " Did you mean to use --heatmap-aspect-ratio and pass a PNG path to --heatmap-output?"
+    raise LocationError(f"--heatmap-output must be a .png file path.{hint}")
+
+
+def parse_heatmap_bounds(value: str) -> HeatmapBounds:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise LocationError("--heatmap-bounds must contain four comma-separated numbers.")
+
+    try:
+        first_lat, first_lon, second_lat, second_lon = (float(part) for part in parts)
+    except ValueError as exc:
+        raise LocationError("--heatmap-bounds must contain valid numbers.") from exc
+
+    south = min(first_lat, second_lat)
+    north = max(first_lat, second_lat)
+    west = min(first_lon, second_lon)
+    east = max(first_lon, second_lon)
+    return normalized_heatmap_bounds(HeatmapBounds(south=south, west=west, north=north, east=east))
+
+
+def normalized_heatmap_bounds(bounds: HeatmapBounds) -> HeatmapBounds:
+    south = max(-WEB_MERCATOR_MAX_LATITUDE, min(WEB_MERCATOR_MAX_LATITUDE, bounds.south))
+    north = max(-WEB_MERCATOR_MAX_LATITUDE, min(WEB_MERCATOR_MAX_LATITUDE, bounds.north))
+    west = max(-180.0, min(180.0, bounds.west))
+    east = max(-180.0, min(180.0, bounds.east))
+
+    if south > north:
+        south, north = north, south
+    if west > east:
+        west, east = east, west
+    if math.isclose(south, north):
+        south -= 0.01
+        north += 0.01
+    if math.isclose(west, east):
+        west -= 0.01
+        east += 0.01
+
+    return HeatmapBounds(
+        south=max(-WEB_MERCATOR_MAX_LATITUDE, south),
+        west=max(-180.0, west),
+        north=min(WEB_MERCATOR_MAX_LATITUDE, north),
+        east=min(180.0, east),
+    )
+
+
+def bounds_from_coordinates(
+    coordinates: list[tuple[float, float]],
+    padding_ratio: float,
+) -> HeatmapBounds:
+    if not coordinates:
+        raise LocationError("No valid GPS coordinates were found for heatmap generation.")
+
+    latitudes = [latitude for latitude, _ in coordinates]
+    longitudes = [longitude for _, longitude in coordinates]
+    south = min(latitudes)
+    north = max(latitudes)
+    west = min(longitudes)
+    east = max(longitudes)
+
+    lat_span = max(north - south, 0.02)
+    lon_span = max(east - west, 0.02)
+    padding = max(0.0, padding_ratio)
+    return normalized_heatmap_bounds(
+        HeatmapBounds(
+            south=south - (lat_span * padding),
+            west=west - (lon_span * padding),
+            north=north + (lat_span * padding),
+            east=east + (lon_span * padding),
+        )
+    )
+
+
+def heatmap_country_cache_key(country: str, language: str) -> str:
+    return f"nominatim:country-bounds:v1:{language}:{country.casefold()}"
+
+
+def heatmap_bounds_from_country(
+    country: str,
+    args: argparse.Namespace,
+    cache: dict[str, str],
+) -> HeatmapBounds:
+    key = heatmap_country_cache_key(country, args.language)
+    if key in cache:
+        return parse_heatmap_bounds(cache[key])
+
+    query = urlencode({"format": "jsonv2", "q": country, "limit": "1"})
+    request = Request(
+        f"https://nominatim.openstreetmap.org/search?{query}",
+        headers={
+            "Accept": "application/json",
+            "Accept-Language": args.language,
+            "User-Agent": args.user_agent,
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise LocationError(f"Country lookup HTTP error for '{country}': {exc}") from exc
+    except URLError as exc:
+        raise LocationError(f"Could not reach country lookup service: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise LocationError("Country lookup timed out.") from exc
+    except json.JSONDecodeError as exc:
+        raise LocationError("Country lookup returned invalid JSON.") from exc
+
+    if not isinstance(data, list) or not data:
+        raise LocationError(f"Country not found for heatmap bounds: {country}")
+
+    bounding_box = data[0].get("boundingbox")
+    if not isinstance(bounding_box, list) or len(bounding_box) != 4:
+        raise LocationError(f"Country lookup did not return usable bounds for: {country}")
+
+    south, north, west, east = (float(value) for value in bounding_box)
+    bounds = normalized_heatmap_bounds(HeatmapBounds(south=south, west=west, north=north, east=east))
+    cache[key] = f"{bounds.south},{bounds.west},{bounds.north},{bounds.east}"
+    save_cache(args.cache, cache)
+    time.sleep(1.0)
+    return bounds
+
+
+def heatmap_bounds(
+    coordinates: list[tuple[float, float]],
+    args: argparse.Namespace,
+    cache: dict[str, str],
+) -> HeatmapBounds:
+    if args.heatmap_bounds:
+        return parse_heatmap_bounds(args.heatmap_bounds)
+    if args.heatmap_country:
+        return heatmap_bounds_from_country(args.heatmap_country, args, cache)
+    return bounds_from_coordinates(coordinates, args.heatmap_padding_ratio)
+
+
+def clamp_mercator_latitude(latitude: float) -> float:
+    return max(-WEB_MERCATOR_MAX_LATITUDE, min(WEB_MERCATOR_MAX_LATITUDE, latitude))
+
+
+def lat_lon_to_world_pixels(latitude: float, longitude: float, zoom: int) -> tuple[float, float]:
+    latitude = clamp_mercator_latitude(latitude)
+    scale = TILE_SIZE * (2**zoom)
+    x = (longitude + 180.0) / 360.0 * scale
+    lat_rad = math.radians(latitude)
+    y = (1.0 - math.log(math.tan(lat_rad) + (1.0 / math.cos(lat_rad))) / math.pi) / 2.0 * scale
+    return x, y
+
+
+def choose_heatmap_zoom(bounds: HeatmapBounds, width: int, height: int, min_zoom: int, max_zoom: int) -> int:
+    for zoom in range(max_zoom, min_zoom - 1, -1):
+        west_x, north_y = lat_lon_to_world_pixels(bounds.north, bounds.west, zoom)
+        east_x, south_y = lat_lon_to_world_pixels(bounds.south, bounds.east, zoom)
+        if abs(east_x - west_x) <= width * 0.9 and abs(south_y - north_y) <= height * 0.9:
+            return zoom
+    return min_zoom
+
+
+def heatmap_tile_template(args: argparse.Namespace) -> str:
+    if args.heatmap_tile_url:
+        template = args.heatmap_tile_url
+    else:
+        template = HEATMAP_TILE_PROVIDERS[args.heatmap_map_style]
+
+    if args.heatmap_map_style == "custom" and not template:
+        raise LocationError("--heatmap-map-style custom requires --heatmap-tile-url.")
+    if template and not all(token in template for token in ("{z}", "{x}", "{y}")):
+        raise LocationError("--heatmap-tile-url must contain {z}, {x}, and {y}.")
+    return template
+
+
+def require_pillow() -> tuple[Any, Any, Any]:
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError as exc:
+        raise LocationError("Pillow is required for heatmap rendering. Run: python3 -m pip install -r requirements.txt") from exc
+    return Image, ImageDraw, ImageFilter
+
+
+def load_heatmap_tile(
+    x: int,
+    y: int,
+    zoom: int,
+    template: str,
+    args: argparse.Namespace,
+    Image: Any,
+) -> Any:
+    tile_count = 2**zoom
+    if y < 0 or y >= tile_count:
+        return Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (242, 242, 238, 255))
+
+    wrapped_x = x % tile_count
+    cache_path = args.heatmap_tile_cache / args.heatmap_map_style / str(zoom) / str(wrapped_x) / f"{y}.png"
+    if cache_path.exists():
+        return Image.open(cache_path).convert("RGBA")
+
+    url = template.format(z=zoom, x=wrapped_x, y=y)
+    request = Request(url, headers={"User-Agent": args.user_agent})
+    try:
+        with urlopen(request, timeout=30) as response:
+            tile_bytes = response.read()
+    except HTTPError as exc:
+        raise LocationError(f"Map tile HTTP error for {url}: {exc}") from exc
+    except URLError as exc:
+        raise LocationError(f"Could not download map tile {url}: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise LocationError(f"Map tile download timed out: {url}") from exc
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(tile_bytes)
+    return Image.open(BytesIO(tile_bytes)).convert("RGBA")
+
+
+def render_base_heatmap_map(
+    bounds: HeatmapBounds,
+    width: int,
+    height: int,
+    args: argparse.Namespace,
+) -> tuple[Any, int, float, float, Any, Any, Any]:
+    Image, ImageDraw, ImageFilter = require_pillow()
+    template = heatmap_tile_template(args)
+    base = Image.new("RGBA", (width, height), (248, 248, 244, 255))
+
+    zoom = choose_heatmap_zoom(bounds, width, height, args.heatmap_min_zoom, args.heatmap_max_zoom)
+    west_x, north_y = lat_lon_to_world_pixels(bounds.north, bounds.west, zoom)
+    east_x, south_y = lat_lon_to_world_pixels(bounds.south, bounds.east, zoom)
+    center_x = (west_x + east_x) / 2.0
+    center_y = (north_y + south_y) / 2.0
+    top_left_x = center_x - (width / 2.0)
+    top_left_y = center_y - (height / 2.0)
+
+    if not template:
+        return base, zoom, top_left_x, top_left_y, Image, ImageDraw, ImageFilter
+
+    first_tile_x = math.floor(top_left_x / TILE_SIZE)
+    last_tile_x = math.floor((top_left_x + width) / TILE_SIZE)
+    first_tile_y = math.floor(top_left_y / TILE_SIZE)
+    last_tile_y = math.floor((top_left_y + height) / TILE_SIZE)
+
+    for tile_x in range(first_tile_x, last_tile_x + 1):
+        for tile_y in range(first_tile_y, last_tile_y + 1):
+            tile = load_heatmap_tile(tile_x, tile_y, zoom, template, args, Image)
+            paste_x = round((tile_x * TILE_SIZE) - top_left_x)
+            paste_y = round((tile_y * TILE_SIZE) - top_left_y)
+            base.alpha_composite(tile, (paste_x, paste_y))
+
+    return base, zoom, top_left_x, top_left_y, Image, ImageDraw, ImageFilter
+
+
+def heatmap_cluster_coordinates(
+    coordinates: list[tuple[float, float]],
+    cluster_radius_meters: float,
+) -> list[LocationCluster]:
+    return cluster_coordinates(coordinates, cluster_radius_meters)
+
+
+def heatmap_color(value: int, opacity: float) -> tuple[int, int, int, int]:
+    if value <= 0:
+        return 0, 0, 0, 0
+
+    stops = (
+        (0, (0, 80, 255)),
+        (70, (0, 210, 255)),
+        (135, (255, 235, 0)),
+        (200, (255, 98, 0)),
+        (255, (220, 0, 0)),
+    )
+    for index in range(len(stops) - 1):
+        start_value, start_color = stops[index]
+        end_value, end_color = stops[index + 1]
+        if start_value <= value <= end_value:
+            ratio = (value - start_value) / (end_value - start_value)
+            red = round(start_color[0] + ((end_color[0] - start_color[0]) * ratio))
+            green = round(start_color[1] + ((end_color[1] - start_color[1]) * ratio))
+            blue = round(start_color[2] + ((end_color[2] - start_color[2]) * ratio))
+            alpha = round((60 + (195 * (value / 255))) * opacity)
+            return red, green, blue, max(0, min(255, alpha))
+
+    alpha = round(255 * opacity)
+    return 220, 0, 0, max(0, min(255, alpha))
+
+
+def render_heatmap_overlay(
+    coordinates: list[tuple[float, float]],
+    width: int,
+    height: int,
+    zoom: int,
+    top_left_x: float,
+    top_left_y: float,
+    args: argparse.Namespace,
+    Image: Any,
+    ImageDraw: Any,
+    ImageFilter: Any,
+) -> tuple[Any, int]:
+    clusters = heatmap_cluster_coordinates(coordinates, args.heatmap_cluster_radius_meters)
+    heat = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(heat, "L")
+    radius = args.heatmap_point_radius_pixels
+
+    for cluster in clusters:
+        world_x, world_y = lat_lon_to_world_pixels(cluster.latitude, cluster.longitude, zoom)
+        point_x = world_x - top_left_x
+        point_y = world_y - top_left_y
+        if point_x < -radius or point_x > width + radius or point_y < -radius or point_y > height + radius:
+            continue
+        intensity = max(28, min(255, round(52 * math.sqrt(cluster.count))))
+        draw.ellipse(
+            (point_x - radius, point_y - radius, point_x + radius, point_y + radius),
+            fill=intensity,
+        )
+
+    if args.heatmap_blur_pixels > 0:
+        heat = heat.filter(ImageFilter.GaussianBlur(args.heatmap_blur_pixels))
+
+    max_value = heat.getextrema()[1]
+    if max_value > 0:
+        heat = heat.point(lambda value: min(255, round(value * 255 / max_value)))
+
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    heat_values = heat.get_flattened_data() if hasattr(heat, "get_flattened_data") else heat.getdata()
+    overlay.putdata([heatmap_color(value, args.heatmap_opacity) for value in heat_values])
+    return overlay, len(clusters)
+
+
+def chronological_heatmap_points(analyses: dict[str, FolderAnalysis]) -> list[GpxPoint]:
+    points = [point for analysis in analyses.values() for point in analysis.gpx_points]
+    return sorted(points, key=lambda point: (point.captured_at, point.source_file))
+
+
+def trim_edge_heatmap_outliers(points: list[GpxPoint], threshold_meters: float) -> list[GpxPoint]:
+    if threshold_meters <= 0 or len(points) < 3:
+        return points
+
+    edge_limit = max(1, math.ceil(len(points) * 0.2))
+    start = 0
+    end = len(points)
+
+    for index in range(0, len(points) - 1):
+        distance = distance_meters(
+            (points[index].latitude, points[index].longitude),
+            (points[index + 1].latitude, points[index + 1].longitude),
+        )
+        if distance >= threshold_meters:
+            if index < edge_limit:
+                start = index + 1
+            break
+
+    for index in range(len(points) - 2, start - 1, -1):
+        distance = distance_meters(
+            (points[index].latitude, points[index].longitude),
+            (points[index + 1].latitude, points[index + 1].longitude),
+        )
+        if distance >= threshold_meters:
+            if index >= len(points) - 1 - edge_limit:
+                end = index + 1
+            break
+
+    return points[start:end]
+
+
+def heatmap_coordinates_from_analyses(
+    analyses: dict[str, FolderAnalysis],
+    args: argparse.Namespace,
+) -> tuple[list[tuple[float, float]], int]:
+    raw_coordinates = [coordinate for analysis in analyses.values() for coordinate in analysis.coordinates]
+    if args.heatmap_trim_edge_outliers_km <= 0:
+        return raw_coordinates, 0
+
+    timed_points = chronological_heatmap_points(analyses)
+    if len(timed_points) < 3:
+        return raw_coordinates, 0
+
+    trimmed_points = trim_edge_heatmap_outliers(timed_points, args.heatmap_trim_edge_outliers_km * 1000.0)
+    if len(trimmed_points) == len(timed_points):
+        return raw_coordinates, 0
+
+    coordinates = [(point.latitude, point.longitude) for point in trimmed_points]
+    return coordinates, len(timed_points) - len(trimmed_points)
+
+
+def write_heatmap_image(
+    analyses: dict[str, FolderAnalysis],
+    args: argparse.Namespace,
+    cache: dict[str, str],
+) -> tuple[int, int, int, int, HeatmapBounds]:
+    coordinates, trimmed_count = heatmap_coordinates_from_analyses(analyses, args)
+    if not coordinates:
+        raise LocationError("No valid GPS coordinates were found for heatmap generation.")
+
+    width, height = heatmap_dimensions(args.heatmap_width, args.heatmap_aspect_ratio, args.heatmap_orientation)
+    bounds = heatmap_bounds(coordinates, args, cache)
+    base, zoom, top_left_x, top_left_y, Image, ImageDraw, ImageFilter = render_base_heatmap_map(
+        bounds,
+        width,
+        height,
+        args,
+    )
+    overlay, cluster_count = render_heatmap_overlay(
+        coordinates,
+        width,
+        height,
+        zoom,
+        top_left_x,
+        top_left_y,
+        args,
+        Image,
+        ImageDraw,
+        ImageFilter,
+    )
+    image = Image.alpha_composite(base, overlay).convert("RGB")
+    args.heatmap_output.parent.mkdir(parents=True, exist_ok=True)
+    image.save(args.heatmap_output, format="PNG")
+    return len(coordinates), cluster_count, trimmed_count, zoom, bounds
 
 
 def write_csv(rows: list[list[str]], output: Path | None) -> None:
@@ -1059,26 +1634,60 @@ def main() -> int:
             raise LocationError("--geocode-zoom must be between 0 and 18.")
         if args.gpx_only and not args.gpx_output_dir:
             raise LocationError("--gpx-only requires --gpx-output-dir.")
+        if args.heatmap_only and not args.heatmap_output:
+            raise LocationError("--heatmap-only requires --heatmap-output.")
+        if args.heatmap_output:
+            validate_heatmap_output_path(args.heatmap_output)
+        if args.heatmap_only and args.gpx_only:
+            raise LocationError("--heatmap-only cannot be combined with --gpx-only.")
         if args.gpx_max_points < 0:
             raise LocationError("--gpx-max-points cannot be negative.")
         if args.gpx_simplify_distance_meters < 0:
             raise LocationError("--gpx-simplify-distance-meters cannot be negative.")
         if args.gpx_simplify_time_seconds < 0:
             raise LocationError("--gpx-simplify-time-seconds cannot be negative.")
+        if args.heatmap_width < 1:
+            raise LocationError("--heatmap-width must be at least 1.")
+        if args.heatmap_cluster_radius_meters < 0:
+            raise LocationError("--heatmap-cluster-radius-meters cannot be negative.")
+        if args.heatmap_point_radius_pixels < 1:
+            raise LocationError("--heatmap-point-radius-pixels must be at least 1.")
+        if args.heatmap_blur_pixels < 0:
+            raise LocationError("--heatmap-blur-pixels cannot be negative.")
+        if not 0 <= args.heatmap_opacity <= 1:
+            raise LocationError("--heatmap-opacity must be between 0 and 1.")
+        if not 0 <= args.heatmap_min_zoom <= args.heatmap_max_zoom <= 19:
+            raise LocationError("--heatmap-min-zoom and --heatmap-max-zoom must be between 0 and 19.")
+        if args.heatmap_bounds and args.heatmap_country:
+            raise LocationError("--heatmap-bounds and --heatmap-country cannot be used together.")
+        if args.heatmap_trim_edge_outliers_km < 0:
+            raise LocationError("--heatmap-trim-edge-outliers-km cannot be negative.")
         if args.folder_date_tolerance_days < -1:
             raise LocationError("--folder-date-tolerance-days must be -1 or greater.")
         args.minimum_capture_date = parse_iso_date(args.min_capture_date)
 
-        cache = {} if args.gpx_only else load_cache(args.cache)
+        needs_geocode_cache = not args.gpx_only and not args.heatmap_only
+        needs_geocode_cache = needs_geocode_cache or bool(args.heatmap_country)
+        cache = load_cache(args.cache) if needs_geocode_cache else {}
         folders = discover_folders(args.root, selected)
         analyses = analyze_folders(folders, extensions, args, progress)
 
-        if args.gpx_output_dir:
+        if args.heatmap_output:
+            point_count, cluster_count, trimmed_count, zoom, bounds = write_heatmap_image(analyses, args, cache)
+            trim_text = f", {trimmed_count} edge outliers trimmed" if trimmed_count else ""
+            print(
+                "Heatmap "
+                f"{args.heatmap_output}: {point_count} points, {cluster_count} clusters, zoom {zoom}{trim_text} "
+                f"({bounds.south:.4f},{bounds.west:.4f},{bounds.north:.4f},{bounds.east:.4f})",
+                file=sys.stderr,
+            )
+
+        if args.gpx_output_dir and not args.heatmap_only:
             written = write_gpx_files(folders, analyses, args.gpx_output_dir, args)
             for folder_name, (original_count, written_count) in written.items():
                 print(f"GPX {folder_name}: {written_count}/{original_count} points written", file=sys.stderr)
 
-        if not args.gpx_only:
+        if not args.gpx_only and not args.heatmap_only:
             coordinates = {folder_name: analysis.clusters for folder_name, analysis in analyses.items()}
             rows = build_rows(folders, coordinates, args, cache)
             write_csv(rows, args.output)
