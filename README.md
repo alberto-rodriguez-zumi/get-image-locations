@@ -8,15 +8,69 @@ Example output:
 "2026-06-02";"Matsumoto, Azumino"
 ```
 
-## Dependencies
+## Parameters
 
-No external Python packages are required. The script uses only the Python standard library.
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `root` | Required | Root folder containing the photo/video subfolders. |
+| `-o`, `--output` | None | Optional CSV output path. Rows are always printed to stdout too. |
+| `--folder` | None | Only process this immediate subfolder name. Can be passed multiple times. |
+| `--cache` | `.geocode-cache.json` | JSON cache for reverse geocoding and country-bound lookup results. |
+| `--coordinate-precision` | `2` | Decimals used when printing coordinates with `--no-geocode`. |
+| `--cluster-radius-meters` | `1000` | Merge GPS points within this distance before reverse geocoding. Use `0` to disable. |
+| `--min-photos-per-location` | `1` | Hide clustered locations with fewer GPS media files than this. |
+| `--language` | `en` | Preferred language for location names. |
+| `--geocode-zoom` | `12` | Reverse geocoder detail level from `0` to `18`. Higher is more specific. |
+| `--name-detail` | `balanced` | Location-name specificity. Choices: `balanced`, `specific`, `address`. |
+| `--allow-local-script` | `false` | Allow local-script names such as Japanese kanji/kana when no romanized name is available. |
+| `--user-agent` | `get-image-locations/1.0` | User-Agent sent to map/geocoding services. |
+| `--no-geocode` | `false` | Print rounded coordinates instead of calling the reverse geocoder. |
+| `--extensions` | `heic,heif,jpg,jpeg,png,tif,tiff,dng,cr2,cr3,nef,arw,raf,rw2,orf,mov,mp4` | Comma-separated file extensions to scan. |
+| `--include-empty` | `false` | Include folders that have no GPS locations. |
+| `--no-progress` | `false` | Disable progress messages on stderr. |
+| `--exiftool-batch-size` | `100` | Number of files passed to each `exiftool` call. |
+| `--gpx-output-dir` | None | Optional folder where one GPX track per input subfolder will be written. |
+| `--gpx-only` | `false` | Generate GPX and skip CSV/geocoding summary output. Requires `--gpx-output-dir`. |
+| `--gpx-max-points` | `0` | Maximum points per generated GPX. Use `0` for no hard limit. |
+| `--gpx-simplify-distance-meters` | `25` | Collapse consecutive GPX points within this distance. |
+| `--gpx-simplify-time-seconds` | `300` | Collapse consecutive GPX points within this time gap. |
+| `--heatmap-output` | None | Optional `.png` output path for a Google Photos-style photo heatmap. |
+| `--heatmap-only` | `false` | Only generate the heatmap image. Requires `--heatmap-output` and skips CSV/GPX output. |
+| `--heatmap-width` | `1600` | Heatmap image width in pixels. Height is derived from aspect ratio. |
+| `--heatmap-aspect-ratio` | `16:9` | Heatmap aspect ratio, such as `1:1`, `4:3`, `3:2`, `16:9`, `portrait`, or `landscape`. |
+| `--heatmap-orientation` | `landscape` | Image orientation applied to non-square aspect ratios. Choices: `landscape`, `portrait`. |
+| `--heatmap-cluster-radius-meters` | `250` | Merge heatmap photo points within this distance before drawing. Use `0` to disable. |
+| `--heatmap-point-radius-pixels` | `6` | Visual radius for each heatmap cluster before blur. Larger values make thicker heat spots. |
+| `--heatmap-blur-pixels` | `22` | Gaussian blur radius for the heatmap overlay. |
+| `--heatmap-opacity` | `0.78` | Maximum heatmap overlay opacity from `0` to `1`. |
+| `--heatmap-map-style` | `carto-light` | Base map style. Choices: `carto-light-nolabels`, `carto-light`, `carto-dark-nolabels`, `carto-voyager`, `osm`, `none`, `custom`. |
+| `--heatmap-tile-url` | None | Custom raster tile URL template with `{z}`, `{x}`, and `{y}`. Use with `--heatmap-map-style custom`. |
+| `--heatmap-tile-cache` | `.tile-cache` | Folder used to cache downloaded map tiles. |
+| `--heatmap-country` | None | Fit the map to this country name using Nominatim bounds instead of photo bounds. |
+| `--heatmap-bounds` | None | Fit the map to explicit bounds as `south,west,north,east` or `lat1,lon1,lat2,lon2`. |
+| `--heatmap-padding-ratio` | `0.08` | Extra padding around automatic photo bounds. |
+| `--heatmap-min-zoom` | `0` | Minimum map tile zoom for heatmap rendering. |
+| `--heatmap-max-zoom` | `12` | Maximum map tile zoom for heatmap rendering. |
+| `--heatmap-trim-edge-outliers-km` | `0` | Trim chronological start/end trip segments separated by at least this distance. Use `0` to disable. |
+| `--min-capture-date` | `2000-01-01` | Ignore media captured before this date. |
+| `--folder-date-tolerance-days` | `2` | Ignore dated-folder media captured more than this many days away from the folder date. Use `-1` to disable. |
+| `--allow-zero-coordinates` | `false` | Keep GPS points at `0,0` instead of treating them as invalid. |
+
+## Dependencies
 
 You need:
 
 - Python 3.10 or newer
 - `exiftool`, to read GPS metadata from HEIC, JPEG, MOV, RAW, and similar formats
+- Pillow, to render heatmap images
 - An internet connection if you want to convert coordinates into place names
+  or render heatmap base maps from online tiles
+
+Install the Python dependency:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
 
 ### Install on macOS
 
@@ -81,6 +135,9 @@ This keeps CSV output on stdout and writes files such as `gpx/2026-06-02.gpx`. I
   --gpx-only
 ```
 
+You can combine `--gpx-only` with `--heatmap-output` if you want GPX files plus
+a heatmap image, but no CSV output.
+
 To stay within Lightroom point limits:
 
 ```bash
@@ -105,6 +162,147 @@ Default values:
 - `--gpx-simplify-distance-meters 25`
 - `--gpx-simplify-time-seconds 300`
 - `--gpx-max-points 0`, meaning no hard limit
+
+## Generate a Photo Heatmap Image
+
+You can generate a Google Photos-style heatmap image showing where the photos
+were taken:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png
+```
+
+This keeps the regular CSV output on stdout and writes the image to
+`japan-heatmap.png`. If you only want the image:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-only
+```
+
+By default, the heatmap:
+
+- Uses the same GPS metadata filters as CSV and GPX generation
+- Fits the map to the photo locations
+- Uses a `16:9` landscape image
+- Uses `carto-light` as the base map
+- Caches downloaded map tiles in `.tile-cache/`
+
+`--heatmap-output` must be a `.png` file path. Use
+`--heatmap-aspect-ratio` for values such as `16:9`.
+
+### Heatmap Cluster Size
+
+The heatmap first groups nearby photo points before drawing. A smaller cluster
+radius is more precise; a larger one creates broader heat areas:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-cluster-radius-meters 100
+```
+
+You can also make the visual heat spots thicker or thinner:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-point-radius-pixels 36 \
+  --heatmap-blur-pixels 28
+```
+
+### Heatmap Aspect Ratio and Orientation
+
+Set the output width and aspect ratio:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-square.png \
+  --heatmap-width 1800 \
+  --heatmap-aspect-ratio 1:1
+```
+
+For portrait images:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-portrait.png \
+  --heatmap-aspect-ratio 4:3 \
+  --heatmap-orientation portrait
+```
+
+Common values include `1:1`, `4:3`, `3:2`, `16:9`, `portrait`, and
+`landscape`.
+
+### Heatmap Bounds
+
+Automatic bounds are based on the photo locations. You can instead fit the map
+to a country:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-country.png \
+  --heatmap-country Japan
+```
+
+Country bounds use Nominatim/OpenStreetMap and are cached in the same geocode
+cache file.
+
+You can also pass explicit bounds as `south,west,north,east`:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-bounds.png \
+  --heatmap-bounds 30.0,129.0,46.0,146.0
+```
+
+### Ignore Trip Edge Outliers
+
+If the first or last part of the trip is very far from the main travel area,
+for example airport photos from another country, you can trim those chronological
+edge segments:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-trim-edge-outliers-km 1000
+```
+
+This only trims large jumps near the start or end of the chronological photo
+sequence. Use a high value for international-trip cleanup and `0` to disable it.
+
+### Heatmap Base Maps
+
+Available built-in base map styles:
+
+- `carto-light-nolabels`, default and low-label
+- `carto-light`
+- `carto-dark-nolabels`
+- `carto-voyager`
+- `osm`
+- `none`, useful for testing without internet access
+- `custom`
+
+Example:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-map-style carto-dark-nolabels
+```
+
+For providers such as MapTiler, pass a raster tile URL template:
+
+```bash
+./get_image_locations.py "/Volumes/External Drive/Japan Travel Photos 2026" \
+  --heatmap-output japan-heatmap.png \
+  --heatmap-map-style custom \
+  --heatmap-tile-url "https://api.maptiler.com/maps/YOUR_STYLE/256/{z}/{x}/{y}.png?key=YOUR_KEY"
+```
+
+The URL must contain `{z}`, `{x}`, and `{y}` placeholders.
 
 ## Ignore bad metadata
 
