@@ -179,6 +179,11 @@ def parse_args() -> argparse.Namespace:
         help="Only process this immediate subfolder name. Can be passed multiple times.",
     )
     parser.add_argument(
+        "--exclude-folder",
+        action="append",
+        help="Skip this immediate subfolder name. Can be passed multiple times.",
+    )
+    parser.add_argument(
         "--cache",
         type=Path,
         default=Path(".geocode-cache.json"),
@@ -420,21 +425,26 @@ def save_cache(path: Path, cache: dict[str, str]) -> None:
     )
 
 
-def discover_folders(root: Path, selected: set[str] | None) -> list[Path]:
+def discover_folders(root: Path, selected: set[str] | None, excluded: set[str]) -> list[Path]:
     if not root.exists():
         raise LocationError(f"Root folder does not exist: {root}")
     if not root.is_dir():
         raise LocationError(f"Root path is not a folder: {root}")
 
     folders = sorted(path for path in root.iterdir() if path.is_dir())
-    if selected is None:
-        return folders
-
     by_name = {path.name: path for path in folders}
+
+    missing_excluded = sorted(excluded - set(by_name))
+    if missing_excluded:
+        raise LocationError(f"Excluded subfolder not found under {root}: {', '.join(missing_excluded)}")
+
+    if selected is None:
+        return [folder for folder in folders if folder.name not in excluded]
+
     missing = sorted(selected - set(by_name))
     if missing:
         raise LocationError(f"Subfolder not found under {root}: {', '.join(missing)}")
-    return [by_name[name] for name in sorted(selected)]
+    return [by_name[name] for name in sorted(selected) if name not in excluded]
 
 
 def discover_media_files(folder: Path, extensions: set[str]) -> list[Path]:
@@ -1621,6 +1631,7 @@ def main() -> int:
     args = parse_args()
     extensions = {item.strip().lower().lstrip(".") for item in args.extensions.split(",") if item.strip()}
     selected = set(args.folder) if args.folder else None
+    excluded = set(args.exclude_folder) if args.exclude_folder else set()
     progress = Progress(enabled=not args.no_progress)
 
     try:
@@ -1669,7 +1680,7 @@ def main() -> int:
         needs_geocode_cache = not args.gpx_only and not args.heatmap_only
         needs_geocode_cache = needs_geocode_cache or bool(args.heatmap_country)
         cache = load_cache(args.cache) if needs_geocode_cache else {}
-        folders = discover_folders(args.root, selected)
+        folders = discover_folders(args.root, selected, excluded)
         analyses = analyze_folders(folders, extensions, args, progress)
 
         if args.heatmap_output:
