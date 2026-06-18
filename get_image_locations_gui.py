@@ -99,7 +99,9 @@ class ImageLocationGui(tk.Tk):
 
         self.gpx_output_dir = tk.StringVar(value=self._default_text("gpx_output_dir"))
         self.gpx_only = tk.BooleanVar(value=self._default_bool("gpx_only"))
-        self.gpx_enabled = tk.BooleanVar(value=bool(self.gpx_output_dir.get() or self.gpx_only.get()))
+        self.gpx_enabled = tk.BooleanVar(
+            value=self._default_bool("gpx_enabled", bool(self.gpx_output_dir.get() or self.gpx_only.get()))
+        )
         self.gpx_max_points = tk.StringVar(value=self._default_text("gpx_max_points", "0"))
         self.gpx_simplify_distance = tk.StringVar(value=self._default_text("gpx_simplify_distance_meters", "25"))
         self.gpx_simplify_time = tk.StringVar(value=self._default_text("gpx_simplify_time_seconds", "300"))
@@ -125,11 +127,14 @@ class ImageLocationGui(tk.Tk):
         self.heatmap_max_zoom = tk.StringVar(value=self._default_text("heatmap_max_zoom", "12"))
         self.heatmap_trim_outliers = tk.StringVar(value=self._default_text("heatmap_trim_edge_outliers_km", "0"))
         self.heatmap_enabled = tk.BooleanVar(
-            value=bool(
-                self.heatmap_output.get()
-                or self.heatmap_only.get()
-                or self.heatmap_use_country.get()
-                or self.heatmap_use_bounds.get()
+            value=self._default_bool(
+                "heatmap_enabled",
+                bool(
+                    self.heatmap_output.get()
+                    or self.heatmap_only.get()
+                    or self.heatmap_use_country.get()
+                    or self.heatmap_use_bounds.get()
+                ),
             )
         )
 
@@ -454,11 +459,13 @@ class ImageLocationGui(tk.Tk):
             "extensions": self.extensions.get().strip(),
             "include_empty": self.include_empty.get(),
             "exiftool_batch_size": self.exiftool_batch_size.get().strip(),
+            "gpx_enabled": self.gpx_enabled.get(),
             "gpx_output_dir": self.gpx_output_dir.get().strip() if self.gpx_enabled.get() else "",
             "gpx_only": self.gpx_only.get(),
             "gpx_max_points": self.gpx_max_points.get().strip(),
             "gpx_simplify_distance_meters": self.gpx_simplify_distance.get().strip(),
             "gpx_simplify_time_seconds": self.gpx_simplify_time.get().strip(),
+            "heatmap_enabled": self.heatmap_enabled.get(),
             "heatmap_output": self.heatmap_output.get().strip() if self.heatmap_enabled.get() else "",
             "heatmap_only": self.heatmap_only.get(),
             "heatmap_width": self.heatmap_width.get().strip(),

@@ -186,6 +186,9 @@ file. When the GUI runs the script, it passes `--no-config` and sends the curren
 visible values explicitly, so changing a field in the GUI always affects that
 run even if a saved default exists.
 
+The GUI also stores `gpx_enabled` and `heatmap_enabled` to remember whether those
+sections are enabled. These two keys are only used by the launcher UI.
+
 ## Export to CSV
 
 ```bash
