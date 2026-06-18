@@ -10,6 +10,7 @@ prints CSV rows like:
 from __future__ import annotations
 
 import argparse
+import configparser
 import csv
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -48,6 +49,8 @@ DEFAULT_EXTENSIONS = (
     "mp4",
 )
 DEFAULT_MIN_CAPTURE_DATE = "2000-01-01"
+CONFIG_PATH = Path(__file__).with_name("get_image_locations.cfg")
+CONFIG_SECTION = "defaults"
 
 BASIC_SPECIFIC_LOCATION_FIELDS = (
     "tourism",
@@ -97,6 +100,55 @@ HEATMAP_TILE_PROVIDERS = {
     "osm": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     "none": "",
     "custom": "",
+}
+
+CONFIG_OPTION_TYPES = {
+    "root": Path,
+    "output": Path,
+    "folder": list,
+    "exclude_folder": list,
+    "cache": Path,
+    "coordinate_precision": int,
+    "cluster_radius_meters": float,
+    "min_photos_per_location": int,
+    "language": str,
+    "geocode_zoom": int,
+    "name_detail": str,
+    "allow_local_script": bool,
+    "user_agent": str,
+    "no_geocode": bool,
+    "extensions": str,
+    "include_empty": bool,
+    "no_progress": bool,
+    "exiftool_batch_size": int,
+    "gpx_enabled": bool,
+    "gpx_output_dir": Path,
+    "gpx_only": bool,
+    "gpx_max_points": int,
+    "gpx_simplify_distance_meters": float,
+    "gpx_simplify_time_seconds": int,
+    "heatmap_enabled": bool,
+    "heatmap_output": Path,
+    "heatmap_only": bool,
+    "heatmap_width": int,
+    "heatmap_aspect_ratio": str,
+    "heatmap_orientation": str,
+    "heatmap_cluster_radius_meters": float,
+    "heatmap_point_radius_pixels": int,
+    "heatmap_blur_pixels": int,
+    "heatmap_opacity": float,
+    "heatmap_map_style": str,
+    "heatmap_tile_url": str,
+    "heatmap_tile_cache": Path,
+    "heatmap_country": str,
+    "heatmap_bounds": str,
+    "heatmap_padding_ratio": float,
+    "heatmap_min_zoom": int,
+    "heatmap_max_zoom": int,
+    "heatmap_trim_edge_outliers_km": float,
+    "min_capture_date": str,
+    "folder_date_tolerance_days": int,
+    "allow_zero_coordinates": bool,
 }
 
 
@@ -158,19 +210,103 @@ class Progress:
             self.last_width = 0
 
 
+def split_config_list(value: str) -> list[str]:
+    return [item.strip() for item in value.replace("\n", ",").split(",") if item.strip()]
+
+
+def format_config_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value if str(item).strip())
+    return str(value)
+
+
+def parse_config_value(key: str, value: str) -> Any:
+    value_type = CONFIG_OPTION_TYPES.get(key)
+    if value_type is None:
+        return value
+    if value_type is bool:
+        parser = configparser.ConfigParser()
+        parser[CONFIG_SECTION] = {key: value}
+        return parser.getboolean(CONFIG_SECTION, key)
+    if value_type is list:
+        return split_config_list(value)
+    if value_type is Path:
+        return Path(value)
+    try:
+        return value_type(value)
+    except ValueError as exc:
+        raise LocationError(f"Invalid value for config option '{key}': {value}") from exc
+
+
+def load_config_defaults(path: Path = CONFIG_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+    except configparser.Error as exc:
+        raise LocationError(f"Could not read config file: {path}") from exc
+
+    if not parser.has_section(CONFIG_SECTION):
+        return {}
+
+    defaults: dict[str, Any] = {}
+    for key, value in parser.items(CONFIG_SECTION):
+        normalized_key = key.replace("-", "_")
+        if normalized_key not in CONFIG_OPTION_TYPES:
+            continue
+        if value.strip():
+            defaults[normalized_key] = parse_config_value(normalized_key, value)
+    return defaults
+
+
+def save_config_defaults(values: dict[str, Any], path: Path = CONFIG_PATH) -> None:
+    parser = configparser.ConfigParser()
+    parser[CONFIG_SECTION] = {}
+    for key in CONFIG_OPTION_TYPES:
+        value = values.get(key)
+        if value is None or value == "" or value == []:
+            continue
+        parser[CONFIG_SECTION][key] = format_config_value(value)
+
+    with path.open("w", encoding="utf-8") as handle:
+        parser.write(handle)
+
+
 def parse_args() -> argparse.Namespace:
+    preliminary_parser = argparse.ArgumentParser(add_help=False)
+    preliminary_parser.add_argument("--no-config", action="store_true")
+    preliminary_args, _remaining_args = preliminary_parser.parse_known_args()
+    config_defaults = {} if preliminary_args.no_config else load_config_defaults()
+
+    def configured(name: str, fallback: Any = None) -> Any:
+        return config_defaults.get(name, fallback)
+
     parser = argparse.ArgumentParser(
         description="Read GPS metadata from media files and summarize locations by folder."
     )
     parser.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore get_image_locations.cfg even if it exists.",
+    )
+    parser.add_argument(
         "root",
+        nargs="?",
         type=Path,
+        default=configured("root"),
         help="Folder containing dated subfolders with photos/videos.",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
+        default=configured("output"),
         help="Optional CSV output path. Rows are always printed to stdout too.",
     )
     parser.add_argument(
@@ -186,224 +322,241 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache",
         type=Path,
-        default=Path(".geocode-cache.json"),
+        default=configured("cache", Path(".geocode-cache.json")),
         help="JSON cache for reverse geocoding results. Default: .geocode-cache.json",
     )
     parser.add_argument(
         "--coordinate-precision",
         type=int,
-        default=2,
+        default=configured("coordinate_precision", 2),
         help="Decimals used when printing coordinates with --no-geocode. Default: 2.",
     )
     parser.add_argument(
         "--cluster-radius-meters",
         type=float,
-        default=1000.0,
+        default=configured("cluster_radius_meters", 1000.0),
         help="Merge GPS points within this distance before geocoding. Use 0 to disable. Default: 1000.",
     )
     parser.add_argument(
         "--min-photos-per-location",
         type=int,
-        default=1,
+        default=configured("min_photos_per_location", 1),
         help="Hide clustered locations with fewer GPS media files than this. Default: 1.",
     )
     parser.add_argument(
         "--language",
-        default="en",
+        default=configured("language", "en"),
         help="Preferred language for location names. Default: en.",
     )
     parser.add_argument(
         "--geocode-zoom",
         type=int,
-        default=12,
+        default=configured("geocode_zoom", 12),
         help="Reverse geocoder detail level from 0 to 18. Higher is more specific. Default: 12.",
     )
     parser.add_argument(
         "--name-detail",
         choices=("balanced", "specific", "address"),
-        default="balanced",
+        default=configured("name_detail", "balanced"),
         help="How specific location names should be. Default: balanced.",
     )
     parser.add_argument(
         "--allow-local-script",
         action="store_true",
+        default=configured("allow_local_script", False),
         help="Allow local-script names such as Japanese kanji/kana when no romanized name is available.",
     )
     parser.add_argument(
         "--user-agent",
-        default="get-image-locations/1.0",
+        default=configured("user_agent", "get-image-locations/1.0"),
         help="User-Agent sent to the reverse geocoding service.",
     )
     parser.add_argument(
         "--no-geocode",
         action="store_true",
+        default=configured("no_geocode", False),
         help="Print rounded coordinates instead of calling the reverse geocoder.",
     )
     parser.add_argument(
         "--extensions",
-        default=",".join(DEFAULT_EXTENSIONS),
+        default=configured("extensions", ",".join(DEFAULT_EXTENSIONS)),
         help="Comma-separated file extensions to scan.",
     )
     parser.add_argument(
         "--include-empty",
         action="store_true",
+        default=configured("include_empty", False),
         help="Include folders that have no GPS locations.",
     )
     parser.add_argument(
         "--no-progress",
         action="store_true",
+        default=configured("no_progress", False),
         help="Disable progress messages. Progress is written to stderr, not stdout.",
     )
     parser.add_argument(
         "--exiftool-batch-size",
         type=int,
-        default=100,
+        default=configured("exiftool_batch_size", 100),
         help="Number of files passed to each exiftool call. Default: 100.",
     )
     parser.add_argument(
         "--gpx-output-dir",
         type=Path,
+        default=configured("gpx_output_dir"),
         help="Optional folder where one GPX track per input subfolder will be written.",
     )
     parser.add_argument(
         "--gpx-only",
         action="store_true",
+        default=configured("gpx_only", False),
         help="Generate GPX and skip CSV/geocoding summary output. Requires --gpx-output-dir.",
     )
     parser.add_argument(
         "--gpx-max-points",
         type=int,
-        default=0,
+        default=configured("gpx_max_points", 0),
         help="Maximum points per generated GPX. Use 0 for no hard limit. Default: 0.",
     )
     parser.add_argument(
         "--gpx-simplify-distance-meters",
         type=float,
-        default=25.0,
+        default=configured("gpx_simplify_distance_meters", 25.0),
         help="Collapse consecutive GPX points within this distance. Default: 25.",
     )
     parser.add_argument(
         "--gpx-simplify-time-seconds",
         type=int,
-        default=300,
+        default=configured("gpx_simplify_time_seconds", 300),
         help="Collapse consecutive GPX points within this time gap. Default: 300.",
     )
     parser.add_argument(
         "--heatmap-output",
         type=Path,
+        default=configured("heatmap_output"),
         help="Optional PNG output path for a Google Photos-style photo heatmap.",
     )
     parser.add_argument(
         "--heatmap-only",
         action="store_true",
+        default=configured("heatmap_only", False),
         help="Only generate the heatmap image. Requires --heatmap-output and skips CSV/GPX output.",
     )
     parser.add_argument(
         "--heatmap-width",
         type=int,
-        default=1600,
+        default=configured("heatmap_width", 1600),
         help="Heatmap image width in pixels. Height is derived from aspect ratio. Default: 1600.",
     )
     parser.add_argument(
         "--heatmap-aspect-ratio",
-        default="16:9",
+        default=configured("heatmap_aspect_ratio", "16:9"),
         help="Heatmap aspect ratio, such as 1:1, 4:3, 3:2, 16:9, portrait, or landscape. Default: 16:9.",
     )
     parser.add_argument(
         "--heatmap-orientation",
         choices=("landscape", "portrait"),
-        default="landscape",
+        default=configured("heatmap_orientation", "landscape"),
         help="Image orientation applied to non-square aspect ratios. Default: landscape.",
     )
     parser.add_argument(
         "--heatmap-cluster-radius-meters",
         type=float,
-        default=250.0,
+        default=configured("heatmap_cluster_radius_meters", 250.0),
         help="Merge heatmap photo points within this distance before drawing. Use 0 to disable. Default: 250.",
     )
     parser.add_argument(
         "--heatmap-point-radius-pixels",
         type=int,
-        default=6,
+        default=configured("heatmap_point_radius_pixels", 6),
         help="Visual radius for each heatmap cluster before blur. Larger values make thicker heat spots. Default: 6.",
     )
     parser.add_argument(
         "--heatmap-blur-pixels",
         type=int,
-        default=22,
+        default=configured("heatmap_blur_pixels", 22),
         help="Gaussian blur radius for the heatmap overlay. Default: 22.",
     )
     parser.add_argument(
         "--heatmap-opacity",
         type=float,
-        default=0.78,
+        default=configured("heatmap_opacity", 0.78),
         help="Maximum heatmap overlay opacity from 0 to 1. Default: 0.78.",
     )
     parser.add_argument(
         "--heatmap-map-style",
         choices=tuple(HEATMAP_TILE_PROVIDERS),
-        default="carto-light",
+        default=configured("heatmap_map_style", "carto-light"),
         help="Base map style. Default: carto-light.",
     )
     parser.add_argument(
         "--heatmap-tile-url",
+        default=configured("heatmap_tile_url"),
         help="Custom raster tile URL template with {z}, {x}, and {y}. Use with --heatmap-map-style custom.",
     )
     parser.add_argument(
         "--heatmap-tile-cache",
         type=Path,
-        default=Path(".tile-cache"),
+        default=configured("heatmap_tile_cache", Path(".tile-cache")),
         help="Folder used to cache downloaded map tiles. Default: .tile-cache",
     )
     parser.add_argument(
         "--heatmap-country",
+        default=configured("heatmap_country"),
         help="Fit the map to this country name using Nominatim bounds instead of photo bounds.",
     )
     parser.add_argument(
         "--heatmap-bounds",
+        default=configured("heatmap_bounds"),
         help="Fit the map to explicit bounds as south,west,north,east or lat1,lon1,lat2,lon2.",
     )
     parser.add_argument(
         "--heatmap-padding-ratio",
         type=float,
-        default=0.08,
+        default=configured("heatmap_padding_ratio", 0.08),
         help="Extra padding around automatic photo bounds. Default: 0.08.",
     )
     parser.add_argument(
         "--heatmap-min-zoom",
         type=int,
-        default=0,
+        default=configured("heatmap_min_zoom", 0),
         help="Minimum map tile zoom for heatmap rendering. Default: 0.",
     )
     parser.add_argument(
         "--heatmap-max-zoom",
         type=int,
-        default=12,
+        default=configured("heatmap_max_zoom", 12),
         help="Maximum map tile zoom for heatmap rendering. Default: 12.",
     )
     parser.add_argument(
         "--heatmap-trim-edge-outliers-km",
         type=float,
-        default=0.0,
+        default=configured("heatmap_trim_edge_outliers_km", 0.0),
         help="Trim chronological start/end trip segments separated by at least this distance. Use 0 to disable. Default: 0.",
     )
     parser.add_argument(
         "--min-capture-date",
-        default=DEFAULT_MIN_CAPTURE_DATE,
+        default=configured("min_capture_date", DEFAULT_MIN_CAPTURE_DATE),
         help=f"Ignore media captured before this date. Default: {DEFAULT_MIN_CAPTURE_DATE}.",
     )
     parser.add_argument(
         "--folder-date-tolerance-days",
         type=int,
-        default=2,
+        default=configured("folder_date_tolerance_days", 2),
         help="Ignore dated-folder media captured more than this many days away from the folder date. Use -1 to disable. Default: 2.",
     )
     parser.add_argument(
         "--allow-zero-coordinates",
         action="store_true",
+        default=configured("allow_zero_coordinates", False),
         help="Keep GPS points at 0,0 instead of treating them as invalid.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.folder is None:
+        args.folder = config_defaults.get("folder")
+    if args.exclude_folder is None:
+        args.exclude_folder = config_defaults.get("exclude_folder")
+    return args
 
 
 def load_cache(path: Path) -> dict[str, str]:
@@ -1635,6 +1788,8 @@ def main() -> int:
     progress = Progress(enabled=not args.no_progress)
 
     try:
+        if not args.root:
+            raise LocationError("Root folder is required. Pass it as an argument or set root in get_image_locations.cfg.")
         if args.exiftool_batch_size < 1:
             raise LocationError("--exiftool-batch-size must be at least 1.")
         if args.cluster_radius_meters < 0:

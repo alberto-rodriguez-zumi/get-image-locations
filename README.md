@@ -12,7 +12,8 @@ Example output:
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `root` | Required | Root folder containing the photo/video subfolders. |
+| `--no-config` | `false` | Ignore `get_image_locations.cfg` even if it exists. |
+| `root` | Required unless set in config | Root folder containing the photo/video subfolders. |
 | `-o`, `--output` | None | Optional CSV output path. Rows are always printed to stdout too. |
 | `--folder` | None | Only process this immediate subfolder name. Can be passed multiple times. |
 | `--exclude-folder` | None | Skip this immediate subfolder name. Can be passed multiple times. |
@@ -152,6 +153,41 @@ photo locations automatically.
 
 The launcher is intentionally a wrapper around the CLI script. That keeps the
 command-line workflow and the graphical workflow using the same implementation.
+
+## Config Defaults
+
+If a file named `get_image_locations.cfg` exists in the same folder as the
+scripts, both the CLI and the GUI read it as default values.
+
+Priority order:
+
+1. Built-in script defaults
+2. Values from `get_image_locations.cfg`
+3. Explicit CLI arguments or current GUI values
+
+The file is optional and ignored by git because it is meant for local personal
+defaults.
+
+Example:
+
+```ini
+[defaults]
+root = /Volumes/External Drive/Japan Travel Photos 2026
+language = en
+geocode_zoom = 12
+cluster_radius_meters = 1000
+exclude_folder = 2026-05-25, 2026-06-14
+heatmap_map_style = carto-light
+heatmap_country = Japan
+```
+
+The GUI has a `Save Defaults` button that writes the current GUI values to this
+file. When the GUI runs the script, it passes `--no-config` and sends the current
+visible values explicitly, so changing a field in the GUI always affects that
+run even if a saved default exists.
+
+The GUI also stores `gpx_enabled` and `heatmap_enabled` to remember whether those
+sections are enabled. These two keys are only used by the launcher UI.
 
 ## Export to CSV
 
