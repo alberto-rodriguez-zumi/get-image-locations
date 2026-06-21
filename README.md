@@ -145,9 +145,11 @@ will run, then launches `get_image_locations.py` in the background and streams
 the output inside the window.
 
 Use the folder picker beside "Photo root folders" to add roots, or type a
-comma-separated root list. Use "Only these folders" to limit processing to a
-comma-separated folder list, and "Excluded folders" to skip a comma-separated
-folder list.
+comma-separated root list. On macOS, the picker supports selecting several
+folders at once with Cmd or Shift. On Linux, multi-selection is available when
+`zenity` is installed; otherwise the standard single-folder picker is used.
+Use "Only these folders" to limit processing to a comma-separated folder list,
+and "Excluded folders" to skip a comma-separated folder list.
 
 In the Heatmap tab, enable "Fit heatmap to a country" when you want the map
 framed to a country such as `Japan`. Leave it disabled to let the map fit the

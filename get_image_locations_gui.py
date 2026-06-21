@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 import queue
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -38,6 +39,53 @@ MAP_STYLES = (
 )
 NAME_DETAILS = ("balanced", "specific", "address")
 ORIENTATIONS = ("landscape", "portrait")
+
+
+def choose_multiple_directories_macos() -> list[str] | None:
+    script = """
+set selectedFolders to choose folder with prompt "Select photo root folders" with multiple selections allowed
+set folderPaths to {}
+repeat with selectedFolder in selectedFolders
+    set end of folderPaths to POSIX path of selectedFolder
+end repeat
+set text item delimiters to linefeed
+return folderPaths as text
+"""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+
+    if result.returncode:
+        return []
+    return [path.strip() for path in result.stdout.splitlines() if path.strip()]
+
+
+def choose_multiple_directories_linux() -> list[str] | None:
+    if shutil.which("zenity") is None:
+        return None
+
+    result = subprocess.run(
+        [
+            "zenity",
+            "--file-selection",
+            "--directory",
+            "--multiple",
+            "--separator=|",
+            "--title=Select photo root folders",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        return []
+    return [path.strip() for path in result.stdout.split("|") if path.strip()]
 
 
 class ScrollFrame(ttk.Frame):
@@ -175,7 +223,7 @@ class ImageLocationGui(tk.Tk):
         self._build_bottom_panel()
 
     def _build_input_tab(self, frame: ttk.Frame) -> None:
-        self._entry_row(frame, 0, "Photo root folders", self.root_path, self._choose_root_folder)
+        self._entry_row(frame, 0, "Photo root folders", self.root_path, self._choose_root_folders)
         self._entry_row(frame, 1, "Optional CSV output file", self.csv_output, self._choose_csv_output)
         self._entry_row(frame, 2, "Only these folders", self.folders)
         self._entry_row(frame, 3, "Excluded folders", self.excluded_folders)
@@ -611,13 +659,24 @@ class ImageLocationGui(tk.Tk):
         self.output_text.insert("end", text)
         self.output_text.see("end")
 
-    def _choose_root_folder(self) -> None:
-        path = filedialog.askdirectory(title="Add photo root folder")
-        if path:
-            roots = self._root_values()
+    def _choose_root_folders(self) -> None:
+        paths: list[str] | None
+        if sys.platform == "darwin":
+            paths = choose_multiple_directories_macos()
+        elif sys.platform.startswith("linux"):
+            paths = choose_multiple_directories_linux()
+        else:
+            paths = None
+
+        if paths is None:
+            path = filedialog.askdirectory(title="Add photo root folder")
+            paths = [path] if path else []
+
+        roots = self._root_values()
+        for path in paths:
             if path not in roots:
                 roots.append(path)
-            self.root_path.set(", ".join(roots))
+        self.root_path.set(", ".join(roots))
 
     def _choose_csv_output(self) -> None:
         path = filedialog.asksaveasfilename(
