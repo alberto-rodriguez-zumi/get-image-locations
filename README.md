@@ -13,7 +13,7 @@ Example output:
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `--no-config` | `false` | Ignore `get_image_locations.cfg` even if it exists. |
-| `root` | Required unless set in config | Root folder containing the photo/video subfolders. |
+| `root` | Required unless set in config | One or more root folders containing photo/video subfolders. |
 | `-o`, `--output` | None | Optional CSV output path. Rows are always printed to stdout too. |
 | `--folder` | None | Only process this immediate subfolder name. Can be passed multiple times. |
 | `--exclude-folder` | None | Skip this immediate subfolder name. Can be passed multiple times. |
@@ -122,7 +122,7 @@ Privacy note: this mode sends rounded GPS coordinates to Nominatim/OpenStreetMap
 
 By default the script:
 
-- Reads immediate subfolders under the root folder
+- Reads immediate subfolders under each root folder
 - Scans HEIC, HEIF, JPG, JPEG, PNG, TIFF, DNG, several RAW formats, MOV, and MP4
 - Groups nearby coordinates within a 1000 meter radius before geocoding
 - Can hide locations that have very few photos
@@ -139,13 +139,15 @@ launcher:
 ./get_image_locations_gui.py
 ```
 
-The GUI lets you choose the photo root folder, optional CSV output, GPX options,
+The GUI lets you choose one or more photo root folders, optional CSV output, GPX options,
 heatmap options, metadata filters, and map settings. It shows the command it
 will run, then launches `get_image_locations.py` in the background and streams
 the output inside the window.
 
-Use "Only these folders" to limit processing to a comma-separated folder list,
-and "Excluded folders" to skip a comma-separated folder list.
+Use the folder picker beside "Photo root folders" to add roots, or type a
+comma-separated root list. Use "Only these folders" to limit processing to a
+comma-separated folder list, and "Excluded folders" to skip a comma-separated
+folder list.
 
 In the Heatmap tab, enable "Fit heatmap to a country" when you want the map
 framed to a country such as `Japan`. Leave it disabled to let the map fit the
@@ -172,7 +174,7 @@ Example:
 
 ```ini
 [defaults]
-root = /Volumes/External Drive/Japan Travel Photos 2026
+root = /Volumes/External Drive/Japan Travel Photos 2026, /Volumes/External Drive/Weekend Trips 2026
 language = en
 geocode_zoom = 12
 cluster_radius_meters = 1000
@@ -442,6 +444,23 @@ You can also skip one or more immediate subfolders:
 
 `--exclude-folder` can be combined with `--folder`; exclusions are applied after
 the folder selection.
+
+## Combine Multiple Photo Roots
+
+Pass several root folders before the options to combine their photos. This is
+especially useful for a single heatmap spanning several photo libraries:
+
+```bash
+./get_image_locations.py \
+  "/Volumes/External Drive/Japan Travel Photos 2026" \
+  "/Volumes/External Drive/Japan Travel Photos 2025" \
+  --heatmap-output japan-combined.png \
+  --heatmap-country Japan
+```
+
+The same `--folder` and `--exclude-folder` filters apply across all roots. If
+two roots contain subfolders with the same name, CSV rows and GPX filenames are
+labeled with the root folder name as well, so no results are overwritten.
 
 ## Show Coordinates Without Internet Access
 
