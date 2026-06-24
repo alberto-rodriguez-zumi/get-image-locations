@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize GPS photo locations by immediate subfolder.
+"""Summarize GPS photo locations by immediate subfolder across photo roots.
 
 The script reads GPS coordinates with exiftool, reverse-geocodes them, and
 prints CSV rows like:
@@ -10,6 +10,7 @@ prints CSV rows like:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import configparser
 import csv
 from dataclasses import dataclass
@@ -103,7 +104,7 @@ HEATMAP_TILE_PROVIDERS = {
 }
 
 CONFIG_OPTION_TYPES = {
-    "root": Path,
+    "root": list,
     "output": Path,
     "folder": list,
     "exclude_folder": list,
@@ -297,10 +298,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "root",
-        nargs="?",
+        nargs="*",
         type=Path,
         default=configured("root"),
-        help="Folder containing dated subfolders with photos/videos.",
+        help="One or more folders containing photo/video subfolders.",
     )
     parser.add_argument(
         "-o",
@@ -578,26 +579,54 @@ def save_cache(path: Path, cache: dict[str, str]) -> None:
     )
 
 
-def discover_folders(root: Path, selected: set[str] | None, excluded: set[str]) -> list[Path]:
-    if not root.exists():
-        raise LocationError(f"Root folder does not exist: {root}")
-    if not root.is_dir():
-        raise LocationError(f"Root path is not a folder: {root}")
+def discover_folders(roots: list[Path], selected: set[str] | None, excluded: set[str]) -> list[Path]:
+    folders: list[Path] = []
+    available_names: set[str] = set()
+    seen_folders: set[Path] = set()
 
-    folders = sorted(path for path in root.iterdir() if path.is_dir())
-    by_name = {path.name: path for path in folders}
+    for root in roots:
+        if not root.exists():
+            raise LocationError(f"Root folder does not exist: {root}")
+        if not root.is_dir():
+            raise LocationError(f"Root path is not a folder: {root}")
 
-    missing_excluded = sorted(excluded - set(by_name))
+        root_folders = sorted(path for path in root.iterdir() if path.is_dir())
+        available_names.update(folder.name for folder in root_folders)
+        for folder in root_folders:
+            if folder in seen_folders:
+                continue
+            if folder.name in excluded:
+                continue
+            if selected is None or folder.name in selected:
+                folders.append(folder)
+                seen_folders.add(folder)
+
+    if selected is not None:
+        missing_selected = sorted(selected - available_names)
+        if missing_selected:
+            raise LocationError(f"Subfolder not found under any root: {', '.join(missing_selected)}")
+
+    missing_excluded = sorted(excluded - available_names)
     if missing_excluded:
-        raise LocationError(f"Excluded subfolder not found under {root}: {', '.join(missing_excluded)}")
+        raise LocationError(f"Excluded subfolder not found under any root: {', '.join(missing_excluded)}")
 
-    if selected is None:
-        return [folder for folder in folders if folder.name not in excluded]
+    return folders
 
-    missing = sorted(selected - set(by_name))
-    if missing:
-        raise LocationError(f"Subfolder not found under {root}: {', '.join(missing)}")
-    return [by_name[name] for name in sorted(selected) if name not in excluded]
+
+def folder_labels(folders: list[Path]) -> dict[Path, str]:
+    name_counts = Counter(folder.name for folder in folders)
+    duplicate_names = {name for name, count in name_counts.items() if count > 1}
+    labels = {
+        folder: folder.name if folder.name not in duplicate_names else f"{folder.parent.name}/{folder.name}"
+        for folder in folders
+    }
+
+    label_counts = Counter(labels.values())
+    duplicate_labels = {label for label, count in label_counts.items() if count > 1}
+    for folder, label in labels.items():
+        if label in duplicate_labels:
+            labels[folder] = str(folder)
+    return labels
 
 
 def discover_media_files(folder: Path, extensions: set[str]) -> list[Path]:
@@ -936,6 +965,7 @@ def limit_gpx_points(points: list[GpxPoint], max_points: int) -> list[GpxPoint]:
 
 def analyze_folders(
     folders: list[Path],
+    labels: dict[Path, str],
     extensions: set[str],
     args: argparse.Namespace,
     progress: Progress,
@@ -947,7 +977,8 @@ def analyze_folders(
         raw_coordinates: list[tuple[float, float]] = []
         gpx_points: list[GpxPoint] = []
         current_folder_date = folder_date(folder.name)
-        progress.update(folder.name, 0, len(files))
+        label = labels[folder]
+        progress.update(label, 0, len(files))
 
         for start in range(0, len(files), args.exiftool_batch_size):
             batch = files[start : start + args.exiftool_batch_size]
@@ -970,11 +1001,11 @@ def analyze_folders(
                     args.folder_date_tolerance_days,
                 )
             )
-            progress.update(folder.name, min(start + len(batch), len(files)), len(files))
+            progress.update(label, min(start + len(batch), len(files)), len(files))
 
         progress.clear()
         clusters = cluster_coordinates(raw_coordinates, args.cluster_radius_meters)
-        analyses[folder.name] = FolderAnalysis(
+        analyses[label] = FolderAnalysis(
             coordinates=raw_coordinates,
             clusters=filter_clusters(clusters, args.min_photos_per_location),
             gpx_points=sorted(gpx_points, key=lambda point: (point.captured_at, point.source_file)),
@@ -1227,19 +1258,21 @@ def unique_preserving_order(values: list[str]) -> list[str]:
 
 def build_rows(
     folders: list[Path],
+    labels: dict[Path, str],
     coordinates_by_folder: dict[str, list[LocationCluster]],
     args: argparse.Namespace,
     cache: dict[str, str],
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     for folder in folders:
+        label = labels[folder]
         locations = [
             location_for_point(cluster.latitude, cluster.longitude, args, cache)
-            for cluster in coordinates_by_folder.get(folder.name, [])
+            for cluster in coordinates_by_folder.get(label, [])
         ]
         locations = unique_preserving_order(locations)
         if locations or args.include_empty:
-            rows.append([folder.name, ", ".join(locations)])
+            rows.append([label, ", ".join(locations)])
     return rows
 
 
@@ -1287,6 +1320,7 @@ def write_gpx_file(path: Path, folder_name: str, points: list[GpxPoint]) -> None
 
 def write_gpx_files(
     folders: list[Path],
+    labels: dict[Path, str],
     analyses: dict[str, FolderAnalysis],
     output_dir: Path,
     args: argparse.Namespace,
@@ -1295,15 +1329,16 @@ def write_gpx_files(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for folder in folders:
-        original_points = analyses.get(folder.name, FolderAnalysis([], [], [])).gpx_points
+        label = labels[folder]
+        original_points = analyses.get(label, FolderAnalysis([], [], [])).gpx_points
         simplified_points = simplify_gpx_points(
             original_points,
             args.gpx_simplify_distance_meters,
             args.gpx_simplify_time_seconds,
         )
         limited_points = limit_gpx_points(simplified_points, args.gpx_max_points)
-        write_gpx_file(output_dir / f"{safe_filename(folder.name)}.gpx", folder.name, limited_points)
-        written[folder.name] = (len(original_points), len(limited_points))
+        write_gpx_file(output_dir / f"{safe_filename(label)}.gpx", label, limited_points)
+        written[label] = (len(original_points), len(limited_points))
 
     return written
 
@@ -1789,7 +1824,7 @@ def main() -> int:
 
     try:
         if not args.root:
-            raise LocationError("Root folder is required. Pass it as an argument or set root in get_image_locations.cfg.")
+            raise LocationError("At least one root folder is required. Pass it as an argument or set root in get_image_locations.cfg.")
         if args.exiftool_batch_size < 1:
             raise LocationError("--exiftool-batch-size must be at least 1.")
         if args.cluster_radius_meters < 0:
@@ -1836,7 +1871,8 @@ def main() -> int:
         needs_geocode_cache = needs_geocode_cache or bool(args.heatmap_country)
         cache = load_cache(args.cache) if needs_geocode_cache else {}
         folders = discover_folders(args.root, selected, excluded)
-        analyses = analyze_folders(folders, extensions, args, progress)
+        labels = folder_labels(folders)
+        analyses = analyze_folders(folders, labels, extensions, args, progress)
 
         if args.heatmap_output:
             point_count, cluster_count, trimmed_count, zoom, bounds = write_heatmap_image(analyses, args, cache)
@@ -1849,13 +1885,13 @@ def main() -> int:
             )
 
         if args.gpx_output_dir and not args.heatmap_only:
-            written = write_gpx_files(folders, analyses, args.gpx_output_dir, args)
+            written = write_gpx_files(folders, labels, analyses, args.gpx_output_dir, args)
             for folder_name, (original_count, written_count) in written.items():
                 print(f"GPX {folder_name}: {written_count}/{original_count} points written", file=sys.stderr)
 
         if not args.gpx_only and not args.heatmap_only:
             coordinates = {folder_name: analysis.clusters for folder_name, analysis in analyses.items()}
-            rows = build_rows(folders, coordinates, args, cache)
+            rows = build_rows(folders, labels, coordinates, args, cache)
             write_csv(rows, args.output)
     except LocationError as exc:
         progress.clear()
